@@ -16,13 +16,15 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 from pathlib import Path
 
-import google.generativeai as genai
-from langchain_anthropic import ChatAnthropic
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import HumanMessage, SystemMessage
 from dotenv import load_dotenv
 from colorama import init, Fore, Style
-from tabulate import tabulate
+
+# Import new modules
+from loaders.document_loader import DocumentLoader
+from loaders.course_loader import CourseModuleLoader
+from agents.routing_agent import RoutingAgent, QueryType
+from agents.module_agent import ModuleAgent
+from agents.document_agent import DocumentAgent, SynthesisAgent
 
 # Initialize colorama for colored output
 init()
@@ -31,19 +33,9 @@ init()
 load_dotenv()
 
 # Configuration constants
-DEFAULT_DOCUMENT_MODEL = "gemini-1.5-flash"
-DEFAULT_SYNTHESIS_MODEL = "claude-3-opus-20240229"
 DOCUMENTS_DIR = "documents"
 LOGS_DIR = "logs"
 QUERIES_LOG_FILE = "logs/queries.jsonl"
-
-# Cost estimates (per 1K tokens) - these are approximate
-COST_ESTIMATES = {
-    "gemini-1.5-flash": {"input": 0.075, "output": 0.30},  # $0.075/$0.30 per 1M tokens
-    "claude-3-opus-20240229": {"input": 0.015, "output": 0.075},  # $15/$75 per 1M tokens
-    "claude-3-sonnet-20240229": {"input": 0.003, "output": 0.015},  # $3/$15 per 1M tokens
-    "claude-3-haiku-20240307": {"input": 0.00025, "output": 0.00125},  # $0.25/$1.25 per 1M tokens
-}
 
 
 class SimpleCache:
@@ -68,11 +60,13 @@ class SimpleCache:
 
     def get_stats(self) -> Dict[str, int]:
         """Get cache statistics."""
+        total_requests = self.hits + self.misses
+        hit_rate = self.hits / total_requests if total_requests > 0 else 0
         return {
             "hits": self.hits,
             "misses": self.misses,
             "size": len(self.cache),
-            "hit_rate": self.hits / (self.hits + self.misses) if (self.hits + self.misses) > 0 else 0
+            "hit_rate": hit_rate
         }
 
     def clear(self) -> None:
@@ -96,268 +90,18 @@ class QueryLogger:
     def log_query(self, query_data: Dict) -> None:
         """Log query data to JSON lines file."""
         query_data["timestamp"] = datetime.now().isoformat()
-        with open(self.log_path, "a") as f:
+        with open(self.log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(query_data) + "\n")
 
 
-class DocumentAgent:
-    """Represents an agent responsible for a single document."""
-
-    def __init__(self, name: str, document_path: str, model: str = DEFAULT_DOCUMENT_MODEL):
-        self.name = name
-        self.document_path = document_path
-        self.model = model
-        self.content = self._load_document()
-        self.llm = self._initialize_llm()
-
-        # Cost tracking
-        self.total_cost = 0.0
-        self.total_tokens = 0
-
-    def _load_document(self) -> str:
-        """Load document content from file."""
-        try:
-            with open(self.document_path, 'r', encoding='utf-8') as f:
-                return f.read()
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Document not found: {self.document_path}")
-        except Exception as e:
-            raise Exception(f"Error loading document {self.document_path}: {e}")
-
-    def _initialize_llm(self):
-        """Initialize the LLM based on the model name."""
-        if self.model.startswith("gemini"):
-            api_key = os.getenv("GOOGLE_API_KEY")
-            if not api_key:
-                raise ValueError("GOOGLE_API_KEY not found in environment variables")
-            genai.configure(api_key=api_key)
-            return ChatGoogleGenerativeAI(
-                model=self.model,
-                temperature=0.1,
-                max_tokens=2048
-            )
-        elif self.model.startswith("claude"):
-            api_key = os.getenv("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
-            return ChatAnthropic(
-                model=self.model,
-                temperature=0.1,
-                max_tokens=2048
-            )
-        else:
-            raise ValueError(f"Unsupported model: {self.model}")
-
-    def query(self, question: str) -> Dict[str, Any]:
-        """Query the document agent with a question."""
-        prompt = self._create_prompt(question)
-
-        try:
-            start_time = time.time()
-            response = self.llm.invoke([HumanMessage(content=prompt)])
-            duration = time.time() - start_time
-
-            # Extract response content
-            response_text = response.content if hasattr(response, 'content') else str(response)
-
-            # Estimate token usage and cost
-            tokens_used = self._estimate_tokens(prompt, response_text)
-            cost = self._calculate_cost(tokens_used)
-
-            # Update tracking
-            self.total_cost += cost
-            self.total_tokens += tokens_used
-
-            return {
-                "response": response_text,
-                "tokens_used": tokens_used,
-                "cost": cost,
-                "duration": duration,
-                "agent_name": self.name
-            }
-
-        except Exception as e:
-            print(f"{Fore.RED}Error querying {self.name}: {e}{Style.RESET_ALL}")
-            return {
-                "response": f"Error: {str(e)}",
-                "tokens_used": 0,
-                "cost": 0.0,
-                "duration": 0.0,
-                "agent_name": self.name
-            }
-
-    def _create_prompt(self, question: str) -> str:
-        """Create the prompt for the document agent."""
-        return f"""You are analyzing a specific document to answer a question.
-
-Document Title: {self.name}
-Document Content:
----
-{self.content}
----
-
-Question: {question}
-
-Please extract all relevant information from this document that helps answer the question. Include specific quotes or references when applicable. If the document doesn't contain relevant information, state that clearly.
-
-Focus on:
-1. Direct answers to the question
-2. Related concepts mentioned
-3. Specific examples or details
-4. Any limitations or caveats mentioned
-
-Provide a clear, concise response based solely on the information in this document."""
-
-    def _estimate_tokens(self, prompt: str, response: str) -> int:
-        """Estimate token usage (rough approximation)."""
-        # Rough estimate: 1 token ≈ 4 characters
-        prompt_tokens = len(prompt) // 4
-        response_tokens = len(response) // 4
-        return prompt_tokens + response_tokens
-
-    def _calculate_cost(self, tokens: int) -> float:
-        """Calculate cost based on token usage."""
-        if self.model not in COST_ESTIMATES:
-            return 0.0
-
-        # Convert to per-token cost (costs are per 1M tokens)
-        input_cost_per_token = COST_ESTIMATES[self.model]["input"] / 1_000_000
-        output_cost_per_token = COST_ESTIMATES[self.model]["output"] / 1_000_000
-
-        # Assume roughly 70% input, 30% output tokens
-        input_tokens = int(tokens * 0.7)
-        output_tokens = tokens - input_tokens
-
-        return (input_tokens * input_cost_per_token) + (output_tokens * output_cost_per_token)
-
-
-class SynthesisAgent:
-    """Synthesizes responses from multiple document agents."""
-
-    def __init__(self, model: str = DEFAULT_SYNTHESIS_MODEL):
-        self.model = model
-        self.llm = self._initialize_llm()
-
-        # Cost tracking
-        self.total_cost = 0.0
-        self.total_tokens = 0
-
-    def _initialize_llm(self):
-        """Initialize the LLM for synthesis."""
-        if self.model.startswith("claude"):
-            api_key = os.getenv("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
-            return ChatAnthropic(
-                model=self.model,
-                temperature=0.1,
-                max_tokens=2048
-            )
-        else:
-            raise ValueError(f"Synthesis agent requires Claude model, got: {self.model}")
-
-    def synthesize(self, question: str, agent_responses: List[Dict]) -> Dict[str, Any]:
-        """Synthesize responses from multiple document agents."""
-        # Filter out error responses
-        valid_responses = [r for r in agent_responses if not r["response"].startswith("Error:")]
-
-        if not valid_responses:
-            return {
-                "response": "No valid responses from document agents to synthesize.",
-                "tokens_used": 0,
-                "cost": 0.0,
-                "sources": []
-            }
-
-        # Format responses for synthesis
-        formatted_responses = []
-        sources = []
-        for resp in valid_responses:
-            formatted_responses.append(f"Source: {resp['agent_name']}\n{resp['response']}\n")
-            sources.append(resp['agent_name'])
-
-        prompt = self._create_synthesis_prompt(question, formatted_responses)
-
-        try:
-            start_time = time.time()
-            response = self.llm.invoke([HumanMessage(content=prompt)])
-            duration = time.time() - start_time
-
-            response_text = response.content if hasattr(response, 'content') else str(response)
-
-            # Estimate token usage and cost
-            tokens_used = self._estimate_tokens(prompt, response_text)
-            cost = self._calculate_cost(tokens_used)
-
-            # Update tracking
-            self.total_cost += cost
-            self.total_tokens += tokens_used
-
-            return {
-                "response": response_text,
-                "tokens_used": tokens_used,
-                "cost": cost,
-                "duration": duration,
-                "sources": sources
-            }
-
-        except Exception as e:
-            print(f"{Fore.RED}Error in synthesis: {e}{Style.RESET_ALL}")
-            return {
-                "response": f"Error during synthesis: {str(e)}",
-                "tokens_used": 0,
-                "cost": 0.0,
-                "duration": 0.0,
-                "sources": []
-            }
-
-    def _create_synthesis_prompt(self, question: str, formatted_responses: List[str]) -> str:
-        """Create the synthesis prompt."""
-        responses_text = "\n---\n".join(formatted_responses)
-
-        return f"""You are synthesizing information from multiple sources to provide a comprehensive answer.
-
-Original Question: {question}
-
-Source Responses:
-{responses_text}
-
-Please create a unified, coherent response that:
-1. Synthesizes information from all sources
-2. Identifies connections and patterns across sources
-3. Notes any contradictions or different perspectives
-4. Provides a clear, comprehensive answer
-
-Maintain source attribution by referencing which document each piece of information comes from.
-
-Structure your response to be clear and well-organized, highlighting key insights and relationships between the different sources."""
-
-    def _estimate_tokens(self, prompt: str, response: str) -> int:
-        """Estimate token usage."""
-        prompt_tokens = len(prompt) // 4
-        response_tokens = len(response) // 4
-        return prompt_tokens + response_tokens
-
-    def _calculate_cost(self, tokens: int) -> float:
-        """Calculate cost based on token usage."""
-        if self.model not in COST_ESTIMATES:
-            return 0.0
-
-        input_cost_per_token = COST_ESTIMATES[self.model]["input"] / 1_000_000
-        output_cost_per_token = COST_ESTIMATES[self.model]["output"] / 1_000_000
-
-        input_tokens = int(tokens * 0.7)
-        output_tokens = tokens - input_tokens
-
-        return (input_tokens * input_cost_per_token) + (output_tokens * output_cost_per_token)
-
-
 class SecondBrainPrototype:
-    """Main orchestrator for the prototype."""
+    """Enhanced orchestrator with routing capabilities."""
 
     def __init__(self):
         self.document_agents = []
-        self.synthesis_agent = None  # Initialize lazily when needed
+        self.module_agents = {}  # New: module-based agents
+        self.routing_agent = RoutingAgent()  # New: routing
+        self.synthesis_agent = None
         self.cache = SimpleCache()
         self.logger = QueryLogger()
 
@@ -371,9 +115,65 @@ class SecondBrainPrototype:
         try:
             agent = DocumentAgent(name, path)
             self.document_agents.append(agent)
-            print(f"{Fore.GREEN}✓ Added document agent: {name}{Style.RESET_ALL}")
-        except Exception as e:
-            print(f"{Fore.RED}✗ Failed to add document {name}: {e}{Style.RESET_ALL}")
+            print(
+                f"{Fore.GREEN}✓ Added document agent: {name}{Style.RESET_ALL}"  # pylint: disable=line-too-long
+            )
+        except (FileNotFoundError, ValueError) as e:
+            print(
+                f"{Fore.RED}✗ Failed to add document {name}: {e}{Style.RESET_ALL}"  # pylint: disable=line-too-long
+            )
+
+    def add_module(self, module_name: str, documents: List[Dict]) -> None:
+        """Add a module agent for handling multiple related documents."""
+        try:
+            agent = ModuleAgent(module_name, documents)
+            self.module_agents[module_name] = agent
+            doc_count = len(documents)
+            msg = (
+                f"✓ Added module agent: {module_name} "
+                f"({doc_count} docs)"
+            )
+            print(
+                f"{Fore.GREEN}{msg}"
+                f"{Style.RESET_ALL}"
+            )
+        except (ValueError, KeyError) as e:
+            print(
+                f"{Fore.RED}✗ Failed to add module {module_name}: {e}"
+                f"{Style.RESET_ALL}"
+            )
+
+    def load_from_paths(self, paths: List[str], recursive: bool = False) -> None:
+        """Load documents from specified paths."""
+        loader = DocumentLoader()
+
+        for path in paths:
+            try:
+                # Check if this is a course directory structure
+                path_obj = Path(path)
+                has_transcripts = (path_obj / "transcripts").exists()
+                if path_obj.is_dir() and has_transcripts:
+                    # Load as course
+                    print(
+                        f"{Fore.CYAN}Loading course: {path_obj.name}{Style.RESET_ALL}"
+                    )
+                    course_loader = CourseModuleLoader(path_obj)
+                    modules = course_loader.load_course()
+
+                    for module_name, documents in modules.items():
+                        if documents:
+                            self.add_module(module_name, documents)
+                else:
+                    # Load as regular documents
+                    docs = loader.load_path(path, recursive)
+                    for name, content in docs:
+                        # Save to temp file for compatibility
+                        temp_path = f"/tmp/{name.replace(' ', '_')}.txt"
+                        Path(temp_path).write_text(content, encoding="utf-8")
+                        self.add_document(name, temp_path)
+
+            except (FileNotFoundError, PermissionError) as e:
+                print(f"{Fore.RED}Error loading {path}: {e}{Style.RESET_ALL}")
 
     def query(self, question: str, use_cache: bool = True) -> Dict[str, Any]:
         """Query the second brain system."""
@@ -387,24 +187,28 @@ class SecondBrainPrototype:
                 print(f"{Fore.YELLOW}Cache hit!{Style.RESET_ALL}")
                 return cached_result
 
-        print(f"{Fore.CYAN}Querying {len(self.document_agents)} document agents...{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}Querying {len(self.document_agents)} document agents...{Style.RESET_ALL}")  # pylint: disable=line-too-long
 
         # Query all document agents
         agent_responses = []
         for agent in self.document_agents:
-            print(f"  Querying {agent.name}...")
+            print(
+                f"  Querying {agent.name}..."
+            )
             response = agent.query(question)
             agent_responses.append(response)
 
         # Synthesize responses
-        print(f"{Fore.CYAN}Synthesizing responses...{Style.RESET_ALL}")
+        print(
+            f"{Fore.CYAN}Synthesizing responses...{Style.RESET_ALL}"
+        )
         if self.synthesis_agent is None:
             self.synthesis_agent = SynthesisAgent()
         synthesis_result = self.synthesis_agent.synthesize(question, agent_responses)
 
         # Calculate totals
         total_cost = sum(r["cost"] for r in agent_responses) + synthesis_result["cost"]
-        total_tokens = sum(r["tokens_used"] for r in agent_responses) + synthesis_result["tokens_used"]
+        total_tokens = sum(r["tokens_used"] for r in agent_responses) + synthesis_result["tokens_used"]  # pylint: disable=line-too-long
         duration = time.time() - start_time
 
         # Prepare result
@@ -437,6 +241,134 @@ class SecondBrainPrototype:
 
         return result
 
+    def query_with_routing(self, question: str, use_cache: bool = True) -> Dict[str, Any]:
+        """Query with intelligent routing."""
+        # Analyze query
+        routing_decision = self.routing_agent.analyze_query(question)
+        print(f"{Fore.CYAN}Query Analysis:{Style.RESET_ALL}")
+        print(f"  Type: {routing_decision['query_type'].value}")
+        print(f"  Complexity: {routing_decision['complexity']}/10")
+        print(
+            f"  Estimated Cost: ${routing_decision['estimated_cost']:.2f}"
+        )
+
+        # Check cache
+        cache_key = hashlib.md5(question.encode()).hexdigest()
+        if use_cache and routing_decision['query_type'] == QueryType.SIMPLE:
+            cached_result = self.cache.get(cache_key)
+            if cached_result:
+                print(f"{Fore.YELLOW}Cache hit!{Style.RESET_ALL}")
+                return cached_result
+
+        # Route to appropriate agents based on decision
+        if routing_decision['query_type'] == QueryType.SIMPLE:
+            # Use single best agent
+            result = self._query_single_agent(question, routing_decision)
+        elif routing_decision['query_type'] == QueryType.SINGLE_MODULE:
+            # Query relevant module
+            result = self._query_module(question, routing_decision)
+        else:
+            # Use full synthesis pipeline
+            result = self._query_with_synthesis(question, routing_decision)
+
+        # Cache if appropriate
+        if use_cache:
+            self.cache.set(cache_key, result)
+
+        # Update tracking
+        self.total_queries += 1
+        self.total_cost += result['total_cost']
+        self.total_tokens += result['total_tokens']
+
+        # Log the query with routing info
+        self.logger.log_query({
+            "question": question,
+            "routing_decision": routing_decision,
+            "result": result
+        })
+
+        return result
+
+    def _query_single_agent(self, question: str, routing_decision: Dict) -> Dict[str, Any]:
+        """Query using single best agent for simple queries."""
+        # For now, use the first available agent
+        if self.document_agents:
+            agent = self.document_agents[0]
+            response = agent.query(question)
+            return {
+                "response": response["response"],
+                "total_cost": response["cost"],
+                "total_tokens": response["tokens_used"],
+                "duration": response["duration"],
+                "cache_hit": False,
+                "sources": [response["agent_name"]],
+                "routing_decision": routing_decision
+            }
+
+        return {
+            "response": "No agents available for query.",
+            "total_cost": 0.0,
+            "total_tokens": 0,
+            "duration": 0.0,
+            "cache_hit": False,
+            "sources": [],
+            "routing_decision": routing_decision
+        }
+
+    def _query_module(self, question: str, routing_decision: Dict) -> Dict[str, Any]:
+        """Query relevant module agents."""
+        if not self.module_agents:
+            # Fall back to regular query if no modules
+            return self.query(question)
+
+        # For now, query all module agents
+        agent_responses = []
+        for module_name, agent in self.module_agents.items():
+            print(f"  Querying {module_name}...")
+            response = agent.query(question)
+            agent_responses.append(response)
+
+        # Synthesize if multiple responses
+        if len(agent_responses) > 1:
+            if self.synthesis_agent is None:
+                self.synthesis_agent = SynthesisAgent()
+            synthesis_result = self.synthesis_agent.synthesize(
+                question, agent_responses
+            )
+            return {
+                "response": synthesis_result["response"],
+                "total_cost": (
+                    sum(r["cost"] for r in agent_responses)
+                    + synthesis_result["cost"]
+                ),
+                "total_tokens": (
+                    sum(r["tokens_used"] for r in agent_responses)
+                    + synthesis_result["tokens_used"]
+                ),
+                "duration": sum(r["duration"] for r in agent_responses),
+                "cache_hit": False,
+                "sources": synthesis_result["sources"],
+                "routing_decision": routing_decision
+            }
+
+        response = agent_responses[0]
+        return {
+            "response": response["response"],
+            "total_cost": response["cost"],
+            "total_tokens": response["tokens_used"],
+            "duration": response["duration"],
+            "cache_hit": False,
+            "sources": [response["agent_name"]],
+            "routing_decision": routing_decision
+        }
+
+    def _query_with_synthesis(self, question: str, routing_decision: Dict) -> Dict[str, Any]:
+        """Query with full synthesis pipeline."""
+        # Use the original query method for complex queries
+        result = self.query(question)
+        result["routing_decision"] = routing_decision
+        return result
+
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get cost summary statistics."""
         cache_stats = self.cache.get_stats()
@@ -458,14 +390,17 @@ class SecondBrainPrototype:
             costs_by_model[synthesis_model]["cost"] += self.synthesis_agent.total_cost
             costs_by_model[synthesis_model]["tokens"] += self.synthesis_agent.total_tokens
 
+        avg_cost = self.total_cost / self.total_queries if self.total_queries > 0 else 0
+        monthly_estimate = (self.total_cost / self.total_queries * 100) if self.total_queries > 0 else 0  # pylint: disable=line-too-long
+
         return {
             "total_queries": self.total_queries,
             "total_cost": self.total_cost,
             "total_tokens": self.total_tokens,
             "cache_stats": cache_stats,
             "costs_by_model": costs_by_model,
-            "average_cost_per_query": self.total_cost / self.total_queries if self.total_queries > 0 else 0,
-            "estimated_monthly_cost": (self.total_cost / self.total_queries * 100) if self.total_queries > 0 else 0
+            "average_cost_per_query": avg_cost,
+            "estimated_monthly_cost": monthly_estimate
         }
 
 
@@ -495,7 +430,8 @@ def display_cost_summary(summary: Dict[str, Any]):
     print(f"\n{Fore.BLUE}{'='*50}{Style.RESET_ALL}")
     print(f"{Fore.BLUE}=== Cost Summary ==={Style.RESET_ALL}")
     print(f"Total Queries: {summary['total_queries']}")
-    print(f"Cache Hits: {summary['cache_stats']['hits']} ({summary['cache_stats']['hit_rate']:.1%})")
+    hit_rate = summary['cache_stats']['hit_rate']
+    print(f"Cache Hits: {summary['cache_stats']['hits']} ({hit_rate:.1%})")
     print(f"Total Cost: ${summary['total_cost']:.4f}")
 
     print(f"\n{Fore.BLUE}By Model:{Style.RESET_ALL}")
@@ -503,7 +439,10 @@ def display_cost_summary(summary: Dict[str, Any]):
         print(f"- {model}: ${data['cost']:.4f} ({data['tokens']:,} tokens)")
 
     print(f"\nAverage Cost per Query: ${summary['average_cost_per_query']:.4f}")
-    print(f"Estimated Monthly Cost (100 queries): ${summary['estimated_monthly_cost']:.2f}")
+    monthly_cost = summary['estimated_monthly_cost']
+    print(
+        f"Estimated Monthly Cost (100 queries): ${monthly_cost:.2f}"
+    )
     print(f"{Fore.BLUE}{'='*50}{Style.RESET_ALL}\n")
 
 
@@ -544,24 +483,117 @@ def interactive_mode(prototype: SecondBrainPrototype):
         except KeyboardInterrupt:
             print(f"\n{Fore.YELLOW}Exiting interactive mode...{Style.RESET_ALL}")
             break
-        except Exception as e:
+        except (ValueError, IOError) as e:
             print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
 
 
-def main():
-    """Main CLI interface."""
-    parser = argparse.ArgumentParser(description="Second Brain Prototype")
-    parser.add_argument("command", choices=["query", "test", "costs", "clear-cache", "interactive"],
-                       help="Command to run")
-    parser.add_argument("--question", "-q", help="Question to ask (for query command)")
-    parser.add_argument("--no-cache", action="store_true", help="Disable caching")
+def run_scale_test(prototype: SecondBrainPrototype):
+    """Run scale testing with real course materials."""
+    test_queries = [
+        # Simple queries
+        ("What is a B+ tree?", QueryType.SIMPLE),
+        ("Define ACID properties", QueryType.SIMPLE),
 
-    args = parser.parse_args()
+        # Single module queries
+        ("Explain indexing strategies in databases", QueryType.SINGLE_MODULE),
+        ("What are the components of a DBMS?", QueryType.SINGLE_MODULE),
 
-    # Initialize the prototype
-    prototype = SecondBrainPrototype()
+        # Cross-module queries
+        ("Compare B+ trees with hash indexes for different workloads", QueryType.CROSS_MODULE),
+        ("How do transactions relate to recovery mechanisms?", QueryType.CROSS_MODULE),
 
-    # Add default documents
+        # Synthesis queries
+        ("Design a database schema for a social media application", QueryType.SYNTHESIS),
+        ("Analyze the trade-offs between consistency and performance", QueryType.SYNTHESIS)
+    ]
+
+    results = []
+    print(f"{Fore.GREEN}Running scale test with {len(test_queries)} queries...{Style.RESET_ALL}\n")
+
+    for query, expected_type in test_queries:
+        print(f"{Fore.YELLOW}Testing: {query}{Style.RESET_ALL}")
+
+        # Test with routing
+        result = prototype.query_with_routing(query)
+
+        results.append({
+            "query": query,
+            "expected_type": expected_type,
+            "actual_type": result.get('routing_decision', {}).get('query_type'),
+            "cost": result['total_cost'],
+            "tokens": result['total_tokens'],
+            "time": result['duration']
+        })
+
+    # Display results summary
+    display_scale_test_results(results)
+
+
+def display_scale_test_results(results: List[Dict]):
+    """Display scale test results summary."""
+    print(f"\n{Fore.BLUE}{'='*60}{Style.RESET_ALL}")
+    print(f"{Fore.BLUE}=== Scale Test Results ==={Style.RESET_ALL}")
+
+    total_cost = sum(r['cost'] for r in results)
+    total_tokens = sum(r['tokens'] for r in results)
+    total_time = sum(r['time'] for r in results)
+
+    print(
+        f"Total Queries: {len(results)}"
+    )
+    print(
+        f"Total Cost: ${total_cost:.4f}"
+    )
+    print(
+        f"Total Tokens: {total_tokens:,}"
+    )
+    print(
+        f"Total Time: {total_time:.1f}s"
+    )
+    print(
+        f"Average Cost per Query: ${total_cost/len(results):.4f}"
+    )
+
+    # Routing accuracy
+    correct_routing = sum(1 for r in results if r['expected_type'] == r['actual_type'])
+    routing_accuracy = correct_routing / len(results)
+    print(
+        f"Routing Accuracy: {routing_accuracy:.1%}"  # pylint: disable=line-too-long
+    )
+
+    print(f"\n{Fore.BLUE}By Query Type:{Style.RESET_ALL}")
+    type_stats = {}
+    for result in results:
+        query_type = result['actual_type'].value if result['actual_type'] else 'unknown'
+        if query_type not in type_stats:
+            type_stats[query_type] = {'count': 0, 'total_cost': 0, 'total_tokens': 0}
+        type_stats[query_type]['count'] += 1
+        type_stats[query_type]['total_cost'] += result['cost']
+        type_stats[query_type]['total_tokens'] += result['tokens']
+
+    for query_type, stats in type_stats.items():
+        avg_cost = stats['total_cost'] / stats['count']
+        print(f"- {query_type}: {stats['count']} queries, ${avg_cost:.4f} avg cost")
+
+    print(f"{Fore.BLUE}{'='*60}{Style.RESET_ALL}\n")
+
+
+def _handle_query_command(prototype: SecondBrainPrototype, args):
+    """Handle the query command."""
+    if not args.question:
+        print(f"{Fore.RED}Error: Please provide a question with --question{Style.RESET_ALL}")
+        sys.exit(1)
+
+    if args.use_routing:
+        result = prototype.query_with_routing(args.question, use_cache=not args.no_cache)
+    else:
+        result = prototype.query(args.question, use_cache=not args.no_cache)
+
+    display_query_response(args.question, result)
+
+
+def _load_default_documents(prototype: SecondBrainPrototype):
+    """Load default documents if they exist."""
     default_docs = [
         ("CS229_Agent", "documents/cs229_optimization.txt"),
         ("CS221_Agent", "documents/cs221_search.txt"),
@@ -574,32 +606,53 @@ def main():
         else:
             print(f"{Fore.RED}Warning: Document not found: {path}{Style.RESET_ALL}")
 
-    if not prototype.document_agents:
-        print(f"{Fore.RED}Error: No document agents could be loaded. Please check the documents directory.{Style.RESET_ALL}")
+
+def main():
+    """Enhanced CLI interface."""
+    parser = argparse.ArgumentParser(description="Second Brain Prototype - Scale Testing Version")
+    parser.add_argument("command", choices=["query", "test", "costs", "clear-cache",
+                                          "interactive", "scale-test"],
+                       help="Command to run")
+    parser.add_argument("--question", "-q", help="Question to ask")
+    parser.add_argument("--documents", "-d", nargs="+",
+                       help="Documents or directories to load (can specify multiple)")
+    parser.add_argument("--recursive", "-r", action="store_true",
+                       help="Recursively search directories for documents")
+    parser.add_argument("--no-cache", action="store_true", help="Disable caching")
+    parser.add_argument("--use-routing", action="store_true",
+                       help="Enable intelligent routing")
+
+    args = parser.parse_args()
+
+    # Initialize the prototype
+    prototype = SecondBrainPrototype()
+
+    # Load documents
+    if args.documents:
+        prototype.load_from_paths(args.documents, args.recursive)
+    else:
+        _load_default_documents(prototype)
+
+    if not prototype.document_agents and not prototype.module_agents:
+        error_msg = "Error: No document agents could be loaded. Please check the documents directory."  # pylint: disable=line-too-long
+        print(f"{Fore.RED}{error_msg}{Style.RESET_ALL}")
         sys.exit(1)
 
-    # Execute command
+    # Execute commands
     if args.command == "query":
-        if not args.question:
-            print(f"{Fore.RED}Error: Please provide a question with --question{Style.RESET_ALL}")
-            sys.exit(1)
-
-        result = prototype.query(args.question, use_cache=not args.no_cache)
-        display_query_response(args.question, result)
-
+        _handle_query_command(prototype, args)
     elif args.command == "test":
         run_test_queries(prototype)
-
     elif args.command == "costs":
         summary = prototype.get_cost_summary()
         display_cost_summary(summary)
-
     elif args.command == "clear-cache":
         prototype.cache.clear()
         print(f"{Fore.GREEN}Cache cleared!{Style.RESET_ALL}")
-
     elif args.command == "interactive":
         interactive_mode(prototype)
+    elif args.command == "scale-test":
+        run_scale_test(prototype)
 
 
 if __name__ == "__main__":
