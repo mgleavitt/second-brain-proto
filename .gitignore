@@ -1,0 +1,4 @@
+.env
+documents/cs221_search.txt
+documents/cs229_optimization.txt
+logs/queries.jsonl
