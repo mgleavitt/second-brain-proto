@@ -110,6 +110,15 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         self.total_cost = 0.0
         self.total_tokens = 0
 
+        # Routing configuration
+        self.routing_config = {
+            'threshold_percentage': 0.5,    # Include modules with >= 50% of top score
+            'max_modules_default': 4,       # Default max modules to query
+            'sample_chunks': 10,            # Number of chunks to sample for routing
+            'weight_decay': True,           # Give more weight to earlier chunks
+        }
+        self._max_modules_override = None  # For dynamic adjustment based on complexity
+
     def add_document(self, name: str, path: str) -> None:
         """Add a document agent."""
         try:
@@ -342,6 +351,20 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
                 print(f"{Fore.YELLOW}Cache hit!{Style.RESET_ALL}")
                 return cached_result
 
+        # Estimate query complexity
+        complexity = self._estimate_query_complexity(question)
+        print(f"{Fore.CYAN}Query complexity: {complexity}{Style.RESET_ALL}")
+
+        # Adjust routing based on complexity
+        if complexity == "simple":
+            self._max_modules_override = 2
+        elif complexity == "comparison":
+            self._max_modules_override = 4
+        elif complexity == "synthesis":
+            self._max_modules_override = 6
+        else:
+            self._max_modules_override = 3
+
         # Determine relevant modules using content-based routing
         relevant_modules = self._route_query(question)
 
@@ -416,35 +439,77 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
 
         for module_name, module_agent in self.module_agents.items():
             score = 0
+            matches = 0
 
-            # Check chunk content for keyword matches (simple TF-IDF-like scoring)
-            for chunk in module_agent.chunks[:10]:  # Sample first 10 chunks
+            # Check chunk content for keyword matches
+            for i, chunk in enumerate(module_agent.chunks[:self.routing_config['sample_chunks']]):
                 chunk_words = set(chunk['text'].lower().split())
                 common_words = question_words & chunk_words
                 if common_words:
-                    # Higher score for more matching words
-                    score += len(common_words) / len(question_words)
+                    # Count matches but normalize by position (earlier chunks = higher weight)
+                    if self.routing_config['weight_decay']:
+                        weight = 1.0 / (i + 1)  # First chunk = 1.0, second = 0.5, etc.
+                    else:
+                        weight = 1.0
+                    matches += len(common_words) * weight
+
+            # Normalize score by number of question words
+            if len(question_words) > 0:
+                score = matches / len(question_words)
 
             module_scores[module_name] = score
 
         # Sort modules by score
         sorted_modules = sorted(module_scores.items(), key=lambda x: x[1], reverse=True)
 
-        # Determine cutoff - include modules with score > threshold
-        threshold = 0.1  # Adjust based on testing
-        relevant_modules = []
-
+        # Print all scores for debugging
         for module_name, score in sorted_modules:
-            if score > threshold:
-                relevant_modules.append(module_name)
-                print(f"  {module_name}: relevance score {score:.2f}")
+            print(f"  {module_name}: relevance score {score:.2f}")
 
-        # If no modules meet threshold, include top 3 or all if fewer
-        if not relevant_modules:
-            print(f"{Fore.YELLOW}Low relevance scores, including top modules{Style.RESET_ALL}")
-            relevant_modules = [m[0] for m in sorted_modules[:min(3, len(sorted_modules))]]
+        # Strategy 1: Include modules with score > X% of top score
+        relevant_modules = []
+        if sorted_modules:
+            top_score = sorted_modules[0][1]
+            threshold_percentage = self.routing_config['threshold_percentage']
+
+            for module_name, score in sorted_modules:
+                if score >= (top_score * threshold_percentage) and score > 0:
+                    relevant_modules.append(module_name)
+
+        # Strategy 2: Limit maximum modules to query
+        max_modules = getattr(self,  # pylint: disable=no-member
+                              '_max_modules_override',
+                              self.routing_config['max_modules_default'])
+        if len(relevant_modules) > max_modules:
+            print(f"{Fore.YELLOW}Limiting to top {max_modules} modules for cost control{Style.RESET_ALL}") #pylint: disable=line-too-long
+            relevant_modules = relevant_modules[:max_modules]
+
+        # Fallback: If no modules selected, use top 2
+        if not relevant_modules and sorted_modules:
+            print(f"{Fore.YELLOW}No modules met threshold, using top 2{Style.RESET_ALL}")
+            relevant_modules = [m[0] for m in sorted_modules[:2]]
 
         return relevant_modules
+
+    def _estimate_query_complexity(self, question: str) -> str:
+        """Estimate query complexity to adjust routing strategy."""
+        question_lower = question.lower()
+
+        # Simple questions (likely single module)
+        if any(phrase in question_lower for phrase in ["what is", "define", "explain"]):
+            return "simple"
+
+        # Comparison questions (likely need multiple modules)
+        if any(phrase in question_lower  # pylint: disable=line-too-long
+               for phrase in ["compare", "contrast", "versus", "vs", "difference between"]):
+            return "comparison"
+
+        # Synthesis questions (might need many modules)
+        if any(phrase in question_lower  # pylint: disable=line-too-long
+               for phrase in ["analyze", "design", "create", "evaluate", "how does"]):
+            return "synthesis"
+
+        return "moderate"
 
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get cost summary statistics."""
@@ -452,7 +517,17 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
 
         # Calculate costs by model
         costs_by_model = {}
+
+        # Add document agent costs
         for agent in self.document_agents:
+            model = agent.model
+            if model not in costs_by_model:
+                costs_by_model[model] = {"cost": 0.0, "tokens": 0}
+            costs_by_model[model]["cost"] += agent.total_cost
+            costs_by_model[model]["tokens"] += agent.total_tokens
+
+        # Add module agent costs
+        for agent in self.module_agents.values():
             model = agent.model
             if model not in costs_by_model:
                 costs_by_model[model] = {"cost": 0.0, "tokens": 0}
