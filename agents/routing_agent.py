@@ -1,12 +1,35 @@
+"""Intelligent query routing system for determining how to process user queries.
+
+This module provides a RoutingAgent class that analyzes user queries to determine
+the appropriate processing strategy based on complexity, scope, and required resources.
+"""
+
 from enum import Enum
 from typing import List, Dict, Any
-import re
+
 
 class QueryType(Enum):
+    """Enumeration of query types based on complexity and scope."""
     SIMPLE = "simple"           # Single fact lookup
     SINGLE_MODULE = "single"    # Within one module
     CROSS_MODULE = "cross"      # Across modules
     SYNTHESIS = "synthesis"     # Complex reasoning
+
+    @classmethod
+    def get_all_types(cls) -> List['QueryType']:
+        """Return all available query types."""
+        return list(cls)
+
+    @classmethod
+    def get_by_complexity_level(cls, level: str) -> 'QueryType':
+        """Get query type by complexity level (simple, moderate, complex, advanced)."""
+        complexity_mapping = {
+            'simple': cls.SIMPLE,
+            'moderate': cls.SINGLE_MODULE,
+            'complex': cls.CROSS_MODULE,
+            'advanced': cls.SYNTHESIS
+        }
+        return complexity_mapping.get(level, cls.SINGLE_MODULE)
 
 class RoutingAgent:
     """Intelligent query routing based on complexity and scope."""
@@ -83,23 +106,23 @@ class RoutingAgent:
 
     def _determine_required_agents(self, query: str, query_type: QueryType) -> List[str]:
         """Determine which agents are needed for this query."""
+        # pylint: disable=unused-argument
         if query_type == QueryType.SIMPLE:
             return ["cache", "single_best_match"]
-        elif query_type == QueryType.SINGLE_MODULE:
+        if query_type == QueryType.SINGLE_MODULE:
             return ["module_search", "module_agents"]
-        elif query_type == QueryType.CROSS_MODULE:
+        if query_type == QueryType.CROSS_MODULE:
             return ["semantic_search", "relevant_modules", "synthesis"]
-        else:  # SYNTHESIS
-            return ["comprehensive_search", "all_relevant_agents", "advanced_synthesis"]
+        # SYNTHESIS
+        return ["comprehensive_search", "all_relevant_agents", "advanced_synthesis"]
 
     def _select_model(self, query_type: QueryType, complexity: int) -> str:
         """Select the appropriate model based on query type and complexity."""
         if query_type == QueryType.SIMPLE or complexity <= 3:
             return "claude-3-haiku-20240307"  # Cheapest, fastest
-        elif complexity <= 6:
+        if complexity <= 6:
             return "claude-3-sonnet-20240229"  # Balanced
-        else:
-            return "claude-3-opus-20240229"  # Most capable
+        return "claude-3-opus-20240229"  # Most capable
 
     def _estimate_cost(self, query_type: QueryType, agent_count: int) -> float:
         """Estimate cost in dollars based on query type."""

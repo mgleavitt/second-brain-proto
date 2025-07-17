@@ -38,7 +38,7 @@ LOGS_DIR = "logs"
 QUERIES_LOG_FILE = "logs/queries.jsonl"
 
 
-class SimpleCache:
+class SimpleCache:  # pylint: disable=too-few-public-methods
     """In-memory cache for query results."""
 
     def __init__(self):
@@ -76,7 +76,7 @@ class SimpleCache:
         self.misses = 0
 
 
-class QueryLogger:
+class QueryLogger:  # pylint: disable=too-few-public-methods
     """Logs queries and responses to JSON lines file."""
 
     def __init__(self, log_path: str = QUERIES_LOG_FILE):
@@ -94,7 +94,7 @@ class QueryLogger:
             f.write(json.dumps(query_data) + "\n")
 
 
-class SecondBrainPrototype:
+class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
     """Enhanced orchestrator with routing capabilities."""
 
     def __init__(self):
@@ -143,7 +143,7 @@ class SecondBrainPrototype:
                 f"{Style.RESET_ALL}"
             )
 
-    def load_from_paths(self, paths: List[str], recursive: bool = False) -> None:
+    def load_from_paths(self, paths: List[str], recursive: bool = False) -> None:  # pylint: disable=too-many-locals
         """Load documents from specified paths."""
         loader = DocumentLoader()
 
@@ -175,7 +175,7 @@ class SecondBrainPrototype:
             except (FileNotFoundError, PermissionError) as e:
                 print(f"{Fore.RED}Error loading {path}: {e}{Style.RESET_ALL}")
 
-    def query(self, question: str, use_cache: bool = True) -> Dict[str, Any]:
+    def query(self, question: str, use_cache: bool = True) -> Dict[str, Any]:  # pylint: disable=too-many-locals
         """Query the second brain system."""
         start_time = time.time()
 
@@ -187,28 +187,35 @@ class SecondBrainPrototype:
                 print(f"{Fore.YELLOW}Cache hit!{Style.RESET_ALL}")
                 return cached_result
 
-        print(f"{Fore.CYAN}Querying {len(self.document_agents)} document agents...{Style.RESET_ALL}")  # pylint: disable=line-too-long
+        # Combine document agents and module agents
+        all_agents = list(self.document_agents)
 
-        # Query all document agents
+        # Add module agents to the query list
+        for _, module_agent in self.module_agents.items():
+            all_agents.append(module_agent)
+
+        print(f"{Fore.CYAN}Querying {len(all_agents)} agents "
+              f"({len(self.document_agents)} documents, {len(self.module_agents)} modules)...{Style.RESET_ALL}") #pylint: disable=line-too-long
+
+        # Query all agents
         agent_responses = []
-        for agent in self.document_agents:
-            print(
-                f"  Querying {agent.name}..."
-            )
+        for agent in all_agents:
+            agent_name = (agent.name if hasattr(agent, 'name')
+                         else agent.module_name)
+            print(f"  Querying {agent_name}...")
             response = agent.query(question)
             agent_responses.append(response)
 
         # Synthesize responses
-        print(
-            f"{Fore.CYAN}Synthesizing responses...{Style.RESET_ALL}"
-        )
+        print(f"{Fore.CYAN}Synthesizing responses...{Style.RESET_ALL}")
         if self.synthesis_agent is None:
             self.synthesis_agent = SynthesisAgent()
         synthesis_result = self.synthesis_agent.synthesize(question, agent_responses)
 
         # Calculate totals
         total_cost = sum(r["cost"] for r in agent_responses) + synthesis_result["cost"]
-        total_tokens = sum(r["tokens_used"] for r in agent_responses) + synthesis_result["tokens_used"]  # pylint: disable=line-too-long
+        total_tokens = (sum(r["tokens_used"] for r in agent_responses) +
+                       synthesis_result["tokens_used"])
         duration = time.time() - start_time
 
         # Prepare result
@@ -241,53 +248,7 @@ class SecondBrainPrototype:
 
         return result
 
-    def query_with_routing(self, question: str, use_cache: bool = True) -> Dict[str, Any]:
-        """Query with intelligent routing."""
-        # Analyze query
-        routing_decision = self.routing_agent.analyze_query(question)
-        print(f"{Fore.CYAN}Query Analysis:{Style.RESET_ALL}")
-        print(f"  Type: {routing_decision['query_type'].value}")
-        print(f"  Complexity: {routing_decision['complexity']}/10")
-        print(
-            f"  Estimated Cost: ${routing_decision['estimated_cost']:.2f}"
-        )
 
-        # Check cache
-        cache_key = hashlib.md5(question.encode()).hexdigest()
-        if use_cache and routing_decision['query_type'] == QueryType.SIMPLE:
-            cached_result = self.cache.get(cache_key)
-            if cached_result:
-                print(f"{Fore.YELLOW}Cache hit!{Style.RESET_ALL}")
-                return cached_result
-
-        # Route to appropriate agents based on decision
-        if routing_decision['query_type'] == QueryType.SIMPLE:
-            # Use single best agent
-            result = self._query_single_agent(question, routing_decision)
-        elif routing_decision['query_type'] == QueryType.SINGLE_MODULE:
-            # Query relevant module
-            result = self._query_module(question, routing_decision)
-        else:
-            # Use full synthesis pipeline
-            result = self._query_with_synthesis(question, routing_decision)
-
-        # Cache if appropriate
-        if use_cache:
-            self.cache.set(cache_key, result)
-
-        # Update tracking
-        self.total_queries += 1
-        self.total_cost += result['total_cost']
-        self.total_tokens += result['total_tokens']
-
-        # Log the query with routing info
-        self.logger.log_query({
-            "question": question,
-            "routing_decision": routing_decision,
-            "result": result
-        })
-
-        return result
 
     def _query_single_agent(self, question: str, routing_decision: Dict) -> Dict[str, Any]:
         """Query using single best agent for simple queries."""
@@ -369,6 +330,122 @@ class SecondBrainPrototype:
         result["routing_decision"] = routing_decision
         return result
 
+    def query_with_routing(self, question: str, use_cache: bool = True) -> Dict[str, Any]:
+        """Query with intelligent routing based on content relevance."""
+        start_time = time.time()
+
+        # Check cache first
+        cache_key = hashlib.md5(question.encode()).hexdigest()
+        if use_cache:
+            cached_result = self.cache.get(cache_key)
+            if cached_result:
+                print(f"{Fore.YELLOW}Cache hit!{Style.RESET_ALL}")
+                return cached_result
+
+        # Determine relevant modules using content-based routing
+        relevant_modules = self._route_query(question)
+
+        print(f"{Fore.CYAN}Routing to {len(relevant_modules)} modules: "
+              f"{relevant_modules}{Style.RESET_ALL}")
+
+        # Query only relevant modules
+        agent_responses = []
+        for module_name in relevant_modules:
+            if module_name in self.module_agents:
+                print(f"  Querying {module_name}...")
+                response = self.module_agents[module_name].query(question)
+                agent_responses.append(response)
+
+        # Add any document agents if present
+        for agent in self.document_agents:
+            print(f"  Querying {agent.name}...")
+            response = agent.query(question)
+            agent_responses.append(response)
+
+        # Synthesize responses
+        print(f"{Fore.CYAN}Synthesizing responses...{Style.RESET_ALL}")
+        if self.synthesis_agent is None:
+            self.synthesis_agent = SynthesisAgent()
+        synthesis_result = self.synthesis_agent.synthesize(question, agent_responses)
+
+        # Calculate totals
+        total_cost = sum(r["cost"] for r in agent_responses) + synthesis_result["cost"]
+        total_tokens = (sum(r["tokens_used"] for r in agent_responses) +
+                       synthesis_result["tokens_used"])
+        duration = time.time() - start_time
+
+        # Prepare result
+        result = {
+            "response": synthesis_result["response"],
+            "total_cost": total_cost,
+            "total_tokens": total_tokens,
+            "duration": duration,
+            "cache_hit": False,
+            "sources": synthesis_result["sources"],
+            "agent_responses": agent_responses,
+            "synthesis_result": synthesis_result,
+            "modules_queried": relevant_modules
+        }
+
+        # Cache the result
+        if use_cache:
+            self.cache.set(cache_key, result)
+
+        # Update tracking
+        self.total_queries += 1
+        self.total_cost += total_cost
+        self.total_tokens += total_tokens
+
+        # Log the query
+        self.logger.log_query({
+            "question": question,
+            "result": result,
+            "agent_responses": agent_responses,
+            "modules_queried": relevant_modules
+        })
+
+        return result
+
+    def _route_query(self, question: str) -> List[str]:
+        """Determine which modules are relevant to the query using content analysis."""
+        question_lower = question.lower()
+        question_words = set(question_lower.split())
+
+        # Score each module based on content relevance
+        module_scores = {}
+
+        for module_name, module_agent in self.module_agents.items():
+            score = 0
+
+            # Check chunk content for keyword matches (simple TF-IDF-like scoring)
+            for chunk in module_agent.chunks[:10]:  # Sample first 10 chunks
+                chunk_words = set(chunk['text'].lower().split())
+                common_words = question_words & chunk_words
+                if common_words:
+                    # Higher score for more matching words
+                    score += len(common_words) / len(question_words)
+
+            module_scores[module_name] = score
+
+        # Sort modules by score
+        sorted_modules = sorted(module_scores.items(), key=lambda x: x[1], reverse=True)
+
+        # Determine cutoff - include modules with score > threshold
+        threshold = 0.1  # Adjust based on testing
+        relevant_modules = []
+
+        for module_name, score in sorted_modules:
+            if score > threshold:
+                relevant_modules.append(module_name)
+                print(f"  {module_name}: relevance score {score:.2f}")
+
+        # If no modules meet threshold, include top 3 or all if fewer
+        if not relevant_modules:
+            print(f"{Fore.YELLOW}Low relevance scores, including top modules{Style.RESET_ALL}")
+            relevant_modules = [m[0] for m in sorted_modules[:min(3, len(sorted_modules))]]
+
+        return relevant_modules
+
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get cost summary statistics."""
         cache_stats = self.cache.get_stats()
@@ -391,7 +468,8 @@ class SecondBrainPrototype:
             costs_by_model[synthesis_model]["tokens"] += self.synthesis_agent.total_tokens
 
         avg_cost = self.total_cost / self.total_queries if self.total_queries > 0 else 0
-        monthly_estimate = (self.total_cost / self.total_queries * 100) if self.total_queries > 0 else 0  # pylint: disable=line-too-long
+        monthly_estimate = ((self.total_cost / self.total_queries * 100)
+                           if self.total_queries > 0 else 0)
 
         return {
             "total_queries": self.total_queries,
@@ -584,6 +662,7 @@ def _handle_query_command(prototype: SecondBrainPrototype, args):
         print(f"{Fore.RED}Error: Please provide a question with --question{Style.RESET_ALL}")
         sys.exit(1)
 
+    # Use routing if specified
     if args.use_routing:
         result = prototype.query_with_routing(args.question, use_cache=not args.no_cache)
     else:
@@ -620,7 +699,7 @@ def main():
                        help="Recursively search directories for documents")
     parser.add_argument("--no-cache", action="store_true", help="Disable caching")
     parser.add_argument("--use-routing", action="store_true",
-                       help="Enable intelligent routing")
+                       help="Use keyword-based routing to reduce costs")
 
     args = parser.parse_args()
 
