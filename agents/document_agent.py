@@ -13,6 +13,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.schema import HumanMessage
 from colorama import Fore, Style
 import google.generativeai as genai  # pylint: disable=unused-import
+from prompt_manager import PromptManager
 
 DEFAULT_DOCUMENT_MODEL = "gemini-1.5-flash"
 DEFAULT_SYNTHESIS_MODEL = "claude-3-opus-20240229"
@@ -27,12 +28,14 @@ class DocumentAgent:  # pylint: disable=too-few-public-methods,too-many-instance
     """Represents an agent responsible for a single document or multiple documents."""
     def __init__(self, name: str, document_path: Optional[str] = None,
                  model: str = DEFAULT_DOCUMENT_MODEL,
-                 documents: Optional[List[Dict[str, str]]] = None):
+                 documents: Optional[List[Dict[str, str]]] = None,
+                 prompt_manager: Optional[PromptManager] = None):
         """Initialize the DocumentAgent with document name, path, model, and optional multi-docs."""
         self.name = name
         self.document_path = document_path
         self.model = model
         self.documents = documents
+        self.prompt_manager = prompt_manager or PromptManager()
         self.llm = self._initialize_llm()
         self.total_cost = 0.0
         self.total_tokens = 0
@@ -140,7 +143,9 @@ class DocumentAgent:  # pylint: disable=too-few-public-methods,too-many-instance
             if len(context) > 8000:
                 context = context[:8000] + "\n\n[Context truncated for length...]"
 
-            prompt = f"""You are analyzing multiple documents from {self.name} to answer a question.
+            # Use PromptManager for multi-document prompt
+            system_prompt = self.prompt_manager.get_prompt("document_multi")
+            prompt = f"""{system_prompt}
 
 Relevant excerpts from the documents:
 ---
@@ -185,7 +190,8 @@ Provide a clear, concise response based solely on the information provided."""
 
     def _create_prompt(self, question: str) -> str:
         """Create a prompt for the LLM based on the question and document content."""
-        return f"""You are analyzing a specific document to answer a question.
+        system_prompt = self.prompt_manager.get_prompt("document_single")
+        return f"""{system_prompt}
 
 Document Title: {self.name}
 Document Content:
@@ -223,9 +229,10 @@ Provide a clear, concise response based solely on the information in this docume
 
 class SynthesisAgent:  # pylint: disable=too-few-public-methods
     """Synthesizes responses from multiple document agents."""
-    def __init__(self, model: str = DEFAULT_SYNTHESIS_MODEL):
+    def __init__(self, model: str = DEFAULT_SYNTHESIS_MODEL, prompt_manager: Optional[PromptManager] = None):
         """Initialize the SynthesisAgent with a model."""
         self.model = model
+        self.prompt_manager = prompt_manager or PromptManager()
         self.llm = self._initialize_llm()
         self.total_cost = 0.0
         self.total_tokens = 0
@@ -288,9 +295,10 @@ class SynthesisAgent:  # pylint: disable=too-few-public-methods
 
     def _create_synthesis_prompt(self, question: str, formatted_responses: List[str]) -> str:
         """Create a synthesis prompt from the question and formatted responses."""
+        system_prompt = self.prompt_manager.get_prompt("synthesis")
         responses_text = "\n---\n".join(formatted_responses)
         return (
-            f"You are synthesizing information from multiple sources to provide a comprehensive answer.\n\n"  # pylint: disable=line-too-long
+            f"{system_prompt}\n\n"
             f"Original Question: {question}\n\n"
             f"Source Responses:\n{responses_text}\n\n"
             "Please create a unified, coherent response that:\n"

@@ -4,19 +4,21 @@ This module defines the ModuleAgent class, which loads, chunks, and queries modu
 using LLMs.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import hashlib
 import time
 from langchain.schema import HumanMessage
 from agents.document_agent import DocumentAgent, DEFAULT_DOCUMENT_MODEL
+from prompt_manager import PromptManager
 
 class ModuleAgent(DocumentAgent):
     """Agent specialized for handling course module content."""
 
     def __init__(self, module_name: str, documents: List[Dict],
-                 model: str = DEFAULT_DOCUMENT_MODEL):
+                 model: str = DEFAULT_DOCUMENT_MODEL,
+                 prompt_manager: Optional[PromptManager] = None):
         # Use DocumentAgent's multi-document mode
-        super().__init__(module_name, model=model, documents=documents)
+        super().__init__(module_name, model=model, documents=documents, prompt_manager=prompt_manager)
         self.module_name = module_name
         self.model = model
         # Chunk all loaded documents
@@ -95,7 +97,8 @@ class ModuleAgent(DocumentAgent):
         context = "\n\n---\n\n".join(context_parts)
         if len(context) > 8000:
             context = context[:8000] + "\n\n[Context truncated for length...]"
-        prompt = f"""You are analyzing documents from {self.module_name} to answer a question.
+        system_prompt = self.prompt_manager.get_prompt("module")
+        prompt = f"""{system_prompt}
 
 Relevant excerpts from the module:
 ---

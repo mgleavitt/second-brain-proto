@@ -25,6 +25,7 @@ from loaders.course_loader import CourseModuleLoader
 from agents.routing_agent import RoutingAgent, QueryType
 from agents.module_agent import ModuleAgent
 from agents.document_agent import DocumentAgent, SynthesisAgent
+from prompt_manager import PromptManager
 
 # Initialize colorama for colored output
 init()
@@ -97,11 +98,12 @@ class QueryLogger:  # pylint: disable=too-few-public-methods
 class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
     """Enhanced orchestrator with routing capabilities."""
 
-    def __init__(self):
+    def __init__(self, prompt_manager: Optional[PromptManager] = None):
         self.document_agents = []
         self.module_agents = {}  # New: module-based agents
         self.routing_agent = RoutingAgent()  # New: routing
         self.synthesis_agent = None
+        self.prompt_manager = prompt_manager or PromptManager()
         self.cache = SimpleCache()
         self.logger = QueryLogger()
 
@@ -122,7 +124,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
     def add_document(self, name: str, path: str) -> None:
         """Add a document agent."""
         try:
-            agent = DocumentAgent(name, path)
+            agent = DocumentAgent(name, path, prompt_manager=self.prompt_manager)
             self.document_agents.append(agent)
             print(
                 f"{Fore.GREEN}✓ Added document agent: {name}{Style.RESET_ALL}"  # pylint: disable=line-too-long
@@ -135,7 +137,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
     def add_module(self, module_name: str, documents: List[Dict]) -> None:
         """Add a module agent for handling multiple related documents."""
         try:
-            agent = ModuleAgent(module_name, documents)
+            agent = ModuleAgent(module_name, documents, prompt_manager=self.prompt_manager)
             self.module_agents[module_name] = agent
             doc_count = len(documents)
             msg = (
@@ -218,7 +220,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         # Synthesize responses
         print(f"{Fore.CYAN}Synthesizing responses...{Style.RESET_ALL}")
         if self.synthesis_agent is None:
-            self.synthesis_agent = SynthesisAgent()
+            self.synthesis_agent = SynthesisAgent(prompt_manager=self.prompt_manager)
         synthesis_result = self.synthesis_agent.synthesize(question, agent_responses)
 
         # Calculate totals
@@ -301,7 +303,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         # Synthesize if multiple responses
         if len(agent_responses) > 1:
             if self.synthesis_agent is None:
-                self.synthesis_agent = SynthesisAgent()
+                self.synthesis_agent = SynthesisAgent(prompt_manager=self.prompt_manager)
             synthesis_result = self.synthesis_agent.synthesize(
                 question, agent_responses
             )
@@ -388,7 +390,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         # Synthesize responses
         print(f"{Fore.CYAN}Synthesizing responses...{Style.RESET_ALL}")
         if self.synthesis_agent is None:
-            self.synthesis_agent = SynthesisAgent()
+            self.synthesis_agent = SynthesisAgent(prompt_manager=self.prompt_manager)
         synthesis_result = self.synthesis_agent.synthesize(question, agent_responses)
 
         # Calculate totals
@@ -619,19 +621,113 @@ def run_test_queries(prototype: SecondBrainPrototype):
 
 def interactive_mode(prototype: SecondBrainPrototype):
     """Run interactive mode for user queries."""
-    print(f"{Fore.GREEN}Interactive mode - type 'quit' to exit{Style.RESET_ALL}\n")
+    print(f"{Fore.GREEN}Interactive mode - type '/quit' to exit{Style.RESET_ALL}\n")
+
+    def print_help():
+        print(f"\n{Fore.BLUE}=== Interactive Mode Help ==={Style.RESET_ALL}")
+        print("\nNavigation Commands:")
+        print("  /quit, /exit, /q              Exit interactive mode")
+        print("  /help, /?                     Show this help message")
+
+        print("\nPrompt Management Commands:")
+        print("  /prompt-reload                Reload all system prompts from files")
+        print("  /prompt-set <key> <file>      Set a custom prompt file for a key")
+        print("  /prompt-show <key>            Show the current prompt for a key")
+        print("  /prompt-create-defaults       Create default prompt files in the prompts directory")
+        print("  /prompt-help                  Show prompt-specific help")
+
+        print("\nSystem Commands:")
+        print("  /costs                        Show cost summary")
+        print("  /clear-cache                  Clear the query cache")
+        print("  /cache-stats                  Show cache statistics")
+
+        print("\nValid prompt keys: document_single, document_multi, module, synthesis")
+        print("\nRegular questions (without /) will be processed using intelligent routing for cost optimization.\n")
+
+    def print_prompt_help():
+        print("\nPrompt management commands:")
+        print("  /prompt-reload                Reload all system prompts from files")
+        print("  /prompt-set <key> <file>      Set a custom prompt file for a key")
+        print("  /prompt-show <key>            Show the current prompt for a key")
+        print("  /prompt-create-defaults       Create default prompt files in the prompts directory")
+        print("  /prompt-help                  Show this help message\n")
+        print("Valid keys: document_single, document_multi, module, synthesis\n")
 
     while True:
         try:
             question = input(f"{Fore.CYAN}Enter your question: {Style.RESET_ALL}")
-            if question.lower() in ['quit', 'exit', 'q']:
-                break
 
+            # Handle all slash commands
+            if question.strip().startswith("/"):
+                cmd = question.strip().split()[0].lower()
+                args = question.strip()[len(cmd):].strip()
+
+                # Navigation commands
+                if cmd in ['/quit', '/exit', '/q']:
+                    break
+                elif cmd in ['/help', '/?']:
+                    print_help()
+                    continue
+
+                # Prompt management commands
+                elif cmd == "/prompt-reload":
+                    reloaded = prototype.prompt_manager.reload_prompts()
+                    print(f"Reloaded {len(reloaded)} prompts:")
+                    for key, prompt in reloaded.items():
+                        print(f"  - {key}: {len(prompt)} characters")
+                elif cmd == "/prompt-set":
+                    parts = args.split(maxsplit=1)
+                    if len(parts) != 2:
+                        print("Usage: /prompt-set <prompt_key> <filepath>")
+                        print("Valid keys: document_single, document_multi, module, synthesis")
+                    else:
+                        prompt_key, filepath = parts
+                        try:
+                            prototype.prompt_manager.set_custom_prompt_path(prompt_key, filepath)
+                            print(f"Set custom prompt for '{prompt_key}' from {filepath}")
+                        except FileNotFoundError as e:
+                            print(f"Error: {e}")
+                elif cmd == "/prompt-show":
+                    if not args:
+                        print("Usage: /prompt-show <prompt_key>")
+                        print("Valid keys: document_single, document_multi, module, synthesis")
+                    else:
+                        prompt_key = args.strip()
+                        prompt = prototype.prompt_manager.get_prompt(prompt_key)
+                        print(f"\n--- {prompt_key} prompt ---")
+                        print(prompt)
+                        print("--- end prompt ---\n")
+                elif cmd == "/prompt-create-defaults":
+                    prototype.prompt_manager.create_default_prompt_files()
+                    print(f"Created default prompt files in {prototype.prompt_manager.prompt_dir}")
+                elif cmd == "/prompt-help":
+                    print_prompt_help()
+
+                # System commands
+                elif cmd == "/costs":
+                    summary = prototype.get_cost_summary()
+                    display_cost_summary(summary)
+                elif cmd == "/clear-cache":
+                    prototype.cache.clear()
+                    print(f"{Fore.GREEN}Cache cleared!{Style.RESET_ALL}")
+                elif cmd == "/cache-stats":
+                    stats = prototype.cache.get_stats()
+                    print(f"\nCache Statistics:")
+                    print(f"  Hits: {stats['hits']}")
+                    print(f"  Misses: {stats['misses']}")
+                    print(f"  Hit Rate: {stats['hit_rate']:.1%}")
+                    print(f"  Cache Size: {stats['size']} entries")
+                else:
+                    print(f"Unknown command: {cmd}")
+                    print("Type /help or /? for available commands.")
+                continue
+
+            # Handle regular questions (no slash)
             if question.strip():
-                result = prototype.query(question)
+                result = prototype.query_with_routing(question)
                 display_query_response(question, result)
             else:
-                print("Please enter a question.")
+                print("Please enter a question or command (use /help for available commands).")
 
         except KeyboardInterrupt:
             print(f"\n{Fore.YELLOW}Exiting interactive mode...{Style.RESET_ALL}")
