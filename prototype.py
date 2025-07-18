@@ -633,7 +633,7 @@ def interactive_mode(prototype: SecondBrainPrototype):
         print("  /prompt-reload                Reload all system prompts from files")
         print("  /prompt-set <key> <file>      Set a custom prompt file for a key")
         print("  /prompt-show <key>            Show the current prompt for a key")
-        print("  /prompt-create-defaults       Create default prompt files in the prompts directory")
+        print("  /prompt-create-defaults       Create default prompt files in the prompts directory") #pylint: disable=line-too-long
         print("  /prompt-help                  Show prompt-specific help")
 
         print("\nSystem Commands:")
@@ -642,14 +642,14 @@ def interactive_mode(prototype: SecondBrainPrototype):
         print("  /cache-stats                  Show cache statistics")
 
         print("\nValid prompt keys: document_single, document_multi, module, synthesis")
-        print("\nRegular questions (without /) will be processed using intelligent routing for cost optimization.\n")
+        print("\nRegular questions (without /) will be processed using intelligent routing for cost optimization.\n") #pylint: disable=line-too-long
 
     def print_prompt_help():
         print("\nPrompt management commands:")
         print("  /prompt-reload                Reload all system prompts from files")
         print("  /prompt-set <key> <file>      Set a custom prompt file for a key")
         print("  /prompt-show <key>            Show the current prompt for a key")
-        print("  /prompt-create-defaults       Create default prompt files in the prompts directory")
+        print("  /prompt-create-defaults       Create default prompt files in the prompts directory") #pylint: disable=line-too-long
         print("  /prompt-help                  Show this help message\n")
         print("Valid keys: document_single, document_multi, module, synthesis\n")
 
@@ -712,7 +712,7 @@ def interactive_mode(prototype: SecondBrainPrototype):
                     print(f"{Fore.GREEN}Cache cleared!{Style.RESET_ALL}")
                 elif cmd == "/cache-stats":
                     stats = prototype.cache.get_stats()
-                    print(f"\nCache Statistics:")
+                    print("\nCache Statistics:")
                     print(f"  Hits: {stats['hits']}")
                     print(f"  Misses: {stats['misses']}")
                     print(f"  Hit Rate: {stats['hit_rate']:.1%}")
@@ -872,10 +872,34 @@ def main():
     parser.add_argument("--use-routing", action="store_true",
                        help="Use keyword-based routing to reduce costs")
 
+    # Prompt management arguments
+    parser.add_argument('--prompt-dir', type=str, default='prompts',
+                        help='Directory containing prompt files')
+    parser.add_argument('--document-single-prompt', type=str,
+                        help='Path to custom document single prompt file')
+    parser.add_argument('--document-multi-prompt', type=str,
+                        help='Path to custom document multi prompt file')
+    parser.add_argument('--module-prompt', type=str,
+                        help='Path to custom module prompt file')
+    parser.add_argument('--synthesis-prompt', type=str,
+                        help='Path to custom synthesis prompt file')
+
     args = parser.parse_args()
 
-    # Initialize the prototype
-    prototype = SecondBrainPrototype()
+    # Initialize the prototype with custom prompt manager
+    prompt_manager = PromptManager(args.prompt_dir)
+
+    # Set custom paths if provided
+    if args.document_single_prompt:
+        prompt_manager.set_custom_prompt_path('document_single', args.document_single_prompt)
+    if args.document_multi_prompt:
+        prompt_manager.set_custom_prompt_path('document_multi', args.document_multi_prompt)
+    if args.module_prompt:
+        prompt_manager.set_custom_prompt_path('module', args.module_prompt)
+    if args.synthesis_prompt:
+        prompt_manager.set_custom_prompt_path('synthesis', args.synthesis_prompt)
+
+    prototype = SecondBrainPrototype(prompt_manager=prompt_manager)
 
     # Load documents
     if args.documents:

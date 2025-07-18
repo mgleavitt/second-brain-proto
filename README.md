@@ -208,6 +208,103 @@ python prototype.py interactive
 python prototype.py scale-test --use-routing
 ```
 
+## System Prompts
+
+The system supports file-based prompts for all agents, allowing dynamic customization of agent behavior without code changes.
+
+### Default Prompt Files
+
+The system uses the following default prompt files in the `prompts/` directory:
+
+- `prompts/document_agent_single.md` - For single document queries
+- `prompts/document_agent_multi.md` - For multi-document queries
+- `prompts/module_agent.md` - For module-level coordination
+- `prompts/synthesis_agent.md` - For response synthesis
+
+### CLI Usage
+
+#### Custom Prompt Directory
+
+```bash
+# Use custom prompt directory
+python prototype.py query -q "question" --prompt-dir /path/to/prompts
+```
+
+#### Custom Prompt Files
+
+```bash
+# Use specific prompt files
+python prototype.py query -q "question" \
+  --document-single-prompt /path/to/custom_single.md \
+  --synthesis-prompt /path/to/custom_synthesis.md
+```
+
+#### All Prompt Options
+
+```bash
+python prototype.py query -q "question" \
+  --prompt-dir /path/to/prompts \
+  --document-single-prompt /path/to/custom_single.md \
+  --document-multi-prompt /path/to/custom_multi.md \
+  --module-prompt /path/to/custom_module.md \
+  --synthesis-prompt /path/to/custom_synthesis.md
+```
+
+### Interactive Mode Commands
+
+In interactive mode, you can manage prompts dynamically:
+
+```bash
+# Start interactive mode
+python prototype.py interactive
+
+# Available prompt commands:
+/prompt-reload              # Reload all prompts from files
+/prompt-set module /path/to/custom.md  # Set custom prompt
+/prompt-show synthesis      # Display current prompt
+/prompt-create-defaults     # Create default prompt files
+/prompt-help                # Show prompt help
+```
+
+### Prompt File Format
+
+Prompt files use markdown format with the following structure:
+
+```markdown
+# Document Single System Prompt
+
+## Overview
+This prompt defines the behavior for the document_single agent.
+
+## Instructions
+You are a document analysis agent. Your task is to answer questions based on the provided document content. Be thorough and accurate.
+
+## Guidelines
+- Be accurate and thorough
+- Cite sources when applicable
+- Maintain objectivity
+
+---
+*Generated on 2025-07-17 17:16:49*
+```
+
+### Testing Prompts
+
+Run the prompt test suite to verify functionality:
+
+```bash
+python test_prompts.py
+```
+
+This will test:
+
+- Basic prompt loading and caching
+- Custom prompt directories
+- Custom prompt file paths
+- Prompt reloading
+- Fallback to defaults
+- Default file creation
+
 ### Example Output
 
 ```text
@@ -266,6 +363,8 @@ second-brain-proto/
 ├── .env                    # API keys (create from .env.example)
 ├── .env.example           # Template for environment variables
 ├── prototype.py           # Main prototype script
+├── prompt_manager.py      # System prompt management
+├── test_prompts.py        # Prompt functionality tests
 ├── agents/                # Agent implementations
 │   ├── __init__.py
 │   ├── document_agent.py  # Individual document agents
@@ -275,6 +374,11 @@ second-brain-proto/
 │   ├── __init__.py
 │   ├── document_loader.py # General document loader
 │   └── course_loader.py   # Course/module loader
+├── prompts/               # System prompt files
+│   ├── document_agent_single.md
+│   ├── document_agent_multi.md
+│   ├── module_agent.md
+│   └── synthesis_agent.md
 ├── documents/            # Test documents directory
 │   ├── cs229_optimization.txt
 │   ├── cs221_search.txt
