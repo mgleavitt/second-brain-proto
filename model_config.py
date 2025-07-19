@@ -74,7 +74,9 @@ class ModelConfig:
         "document": "gemini-flash",
         "module": "gemini-flash",
         "synthesis": "claude-3-sonnet",
-        "routing": "claude-3-haiku"
+        "routing": "claude-3-haiku",
+        "summarizer": "gemini-flash",
+        "evaluator": "gemini-flash"
     }
 
     def __init__(self):

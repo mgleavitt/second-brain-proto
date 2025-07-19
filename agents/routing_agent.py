@@ -11,6 +11,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 from prompt_manager import PromptManager
 from model_config import ModelConfig
+from summarizer import ModuleSummary
 
 
 class QueryType(Enum):
@@ -42,11 +43,14 @@ class RoutingAgent:  # pylint: disable=too-many-instance-attributes
 
     def __init__(self, available_modules: List[str],
                  model_config: Optional[ModelConfig] = None,
-                 prompt_manager: Optional[PromptManager] = None):
+                 prompt_manager: Optional[PromptManager] = None,
+                 summarizer=None):
         """Initialize the RoutingAgent with available modules, model config, and prompt manager."""
         self.available_modules = available_modules
         self.model_config = model_config or ModelConfig()
         self.prompt_manager = prompt_manager or PromptManager()
+        self.summarizer = summarizer
+        self.module_summaries: Dict[str, ModuleSummary] = {}
 
         # Get model name from config
         self.model_name = self.model_config.get_model_name("routing")
@@ -196,3 +200,43 @@ Return only the module names separated by commas, no additional text."""
             QueryType.SYNTHESIS: 0.50
         }
         return base_costs[query_type] * (1 + (agent_count - 1) * 0.1)
+
+    def set_module_summaries(self, summaries: Dict[str, ModuleSummary]):
+        """Update module summaries for enhanced routing."""
+        self.module_summaries = summaries
+
+    def _route_with_summaries(self, question: str) -> List[str]:
+        """Route using module summaries for better accuracy."""
+        if not self.module_summaries:
+            return self.route_query(question)  # Fall back to keyword routing
+
+        # Score modules based on summary relevance
+        scores = {}
+        question_lower = question.lower()
+        question_words = set(question_lower.split())
+
+        for module_name, summary in self.module_summaries.items():
+            score = 0
+
+            # Check key topics
+            for topic in summary.key_topics:
+                if topic.lower() in question_lower:
+                    score += 3  # High weight for key topic match
+
+            # Check summary content
+            summary_words = set(summary.summary.lower().split())
+            overlap = len(question_words & summary_words)
+            score += overlap * 0.5
+
+            scores[module_name] = score
+
+        # Select top modules
+        sorted_modules = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+        # Use same threshold logic as before
+        if sorted_modules and sorted_modules[0][1] > 0:
+            threshold = sorted_modules[0][1] * 0.5
+            selected = [name for name, score in sorted_modules if score >= threshold]
+            return selected[:4]  # Limit to 4 modules
+
+        return []

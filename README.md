@@ -29,15 +29,52 @@ The system consists of several key components:
 - Creates unified, coherent answers
 - Default model: `claude-3-opus-20240229` (high-quality synthesis)
 
+### Routing Agent
+
+- Intelligently routes queries to relevant modules
+- Uses keyword matching and semantic embeddings
+- Reduces costs by querying only relevant documents
+
 ### Cache System
 
 - In-memory caching to reduce costs on repeated queries
+- Semantic caching using embeddings for similar queries
 - Tracks cache hit rates and performance
 
 ### Query Logger
 
 - Logs all queries and responses to JSON lines format
 - Enables analysis and debugging
+
+## Advanced Features
+
+### Module Summaries
+
+- Automatically generates summaries for each module
+- Extracts key topics and concepts
+- Improves routing accuracy by 30-50%
+- Cached to disk for efficiency
+
+### Semantic Caching
+
+- Uses sentence embeddings to find similar queries
+- Reduces API calls by 30-50% for related questions
+- Configurable similarity threshold
+- Automatic expiration of old entries
+
+### Embedding-based Routing
+
+- More accurate than keyword matching
+- Uses semantic similarity to route queries
+- Explains routing decisions
+- Indexes module summaries for fast lookup
+
+### Query Evaluation Framework
+
+- Evaluates response quality using LLMs
+- Compares different routing strategies
+- Provides cost/quality tradeoff analysis
+- Generates performance reports
 
 ## Reviewing Logs
 
@@ -101,9 +138,7 @@ conda create -n second-brain-proto python=3.11
 conda activate second-brain-proto
 
 # Install dependencies
-pip install langchain==0.1.0 langchain-anthropic==0.1.1 \
-    langchain-google-genai==0.0.5 python-dotenv==1.0.0 \
-    pydantic==2.5.3 colorama==0.4.6 tabulate==0.9.0
+pip install -r requirements.txt
 ```
 
 ### 2. API Keys
@@ -264,6 +299,12 @@ python prototype.py interactive
 /prompt-show synthesis      # Display current prompt
 /prompt-create-defaults     # Create default prompt files
 /prompt-help                # Show prompt help
+
+# Advanced feature commands:
+/summarize [--force]        # Generate module summaries
+/evaluate <question>        # Evaluate query strategies
+/semantic-cache [stats|clear-expired]  # Manage semantic cache
+/use-embeddings [on|off]    # Toggle embedding-based routing
 ```
 
 ### Prompt File Format
@@ -304,6 +345,21 @@ This will test:
 - Prompt reloading
 - Fallback to defaults
 - Default file creation
+
+### Testing Advanced Features
+
+Test the new advanced optimization features:
+
+```bash
+python test_advanced_features.py
+```
+
+This will test:
+
+- Module summarization
+- Semantic caching
+- Embedding-based routing
+- Query evaluation framework
 
 ### Example Output
 

@@ -19,6 +19,8 @@ from agents.document_agent import DocumentAgent, SynthesisAgent
 from agents.module_agent import ModuleAgent
 from agents.routing_agent import RoutingAgent
 from loaders.document_loader import DocumentLoader
+from summarizer import ModuleSummarizer
+from evaluation_framework import QueryEvaluator
 
 init(autoreset=True)  # Initialize colorama
 
@@ -82,6 +84,10 @@ Type /help for available commands
                 ("/prompt-set <type> <file>", "Set custom prompt file"),
                 ("/prompt-show <type>", "Show current prompt"),
                 ("/prompt-create-defaults", "Create default prompt files"),
+                ("/summarize [--force]", "Generate module summaries"),
+                ("/evaluate <question>", "Evaluate query strategies"),
+                ("/semantic-cache [stats|clear-expired]", "Manage semantic cache"),
+                ("/use-embeddings [on|off]", "Toggle embedding-based routing"),
                 ("/exit", "Exit interactive mode")
             ]
 
@@ -139,7 +145,15 @@ Type /help for available commands
             print(f"{Fore.RED}Error: No documents loaded. Use /load first{Style.RESET_ALL}")
             return
 
-        # Check cache
+        # Check semantic cache first
+        if self.use_cache and not no_cache and hasattr(self, 'semantic_cache'):
+            cached_result = self.semantic_cache.get(question)
+            if cached_result:
+                print(f"{Fore.YELLOW}[Using semantic cache]{Style.RESET_ALL}")
+                print(cached_result['answer'])
+                return
+
+        # Check regular cache
         if self.use_cache and not no_cache:
             cached_result = self.cache.get(question)
             if cached_result:
@@ -152,8 +166,17 @@ Type /help for available commands
         try:
             start_time = datetime.now()
 
-            # Route or query all
-            if self.use_routing and not no_routing and self.routing_agent:
+            # Route using embeddings if enabled
+            if self.use_routing and not no_routing and getattr(self, 'use_embedding_routing', False):
+                if hasattr(self, 'embedding_router'):
+                    routed_modules = self.embedding_router.route_query(question)
+                    selected_modules = [m[0] for m in routed_modules]
+                    print(f"{Fore.CYAN}Embedding routing to: {selected_modules}{Style.RESET_ALL}")
+                else:
+                    # Fall back to keyword routing
+                    selected_modules = self.routing_agent.route_query(question)
+                    print(f"{Fore.CYAN}Keyword routing to: {selected_modules}{Style.RESET_ALL}")
+            elif self.use_routing and not no_routing and self.routing_agent:
                 selected_modules = self.routing_agent.route_query(question)
                 print(f"{Fore.CYAN}Routing to modules: {selected_modules}{Style.RESET_ALL}")
             else:
@@ -181,7 +204,15 @@ Type /help for available commands
             # Calculate time
             elapsed_time = (datetime.now() - start_time).total_seconds()
 
-            # Cache result
+            # Cache in semantic cache
+            if self.use_cache and hasattr(self, 'semantic_cache'):
+                self.semantic_cache.set(question, {
+                    'answer': final_answer,
+                    'cost': total_cost,
+                    'time': elapsed_time
+                })
+
+            # Cache in regular cache
             if self.use_cache:
                 self.cache.set(question, {
                     'answer': final_answer,
@@ -353,6 +384,106 @@ Type /help for available commands
         self.use_cache = not self.use_cache
         status = "Enabled" if self.use_cache else "Disabled"
         print(f"{Fore.GREEN}Caching {status}{Style.RESET_ALL}")
+
+    def do_summarize(self, arg):
+        """Generate or regenerate module summaries. Usage: /summarize [--force]"""
+        force = "--force" in arg
+
+        if not hasattr(self, 'summarizer'):
+            self.summarizer = ModuleSummarizer(self.model_config, self.prompt_manager)
+
+        print(f"{Fore.YELLOW}Generating module summaries...{Style.RESET_ALL}")
+
+        for module_name, module_agent in self.module_agents.items():
+            summary = self.summarizer.get_or_generate_summary(
+                module_name,
+                module_agent.documents,
+                force_regenerate=force
+            )
+            print(f"{Fore.GREEN}✓ {module_name}: {len(summary.key_topics)} topics, "
+                  f"{summary.document_count} documents{Style.RESET_ALL}")
+
+        # Update routing with summaries
+        if self.routing_agent:
+            self.routing_agent.set_module_summaries(self.summarizer.summaries)
+
+        print(f"{Fore.GREEN}Summary generation complete{Style.RESET_ALL}")
+
+    def do_evaluate(self, arg):
+        """Evaluate query strategies. Usage: /evaluate <question>"""
+        if not arg:
+            print(f"{Fore.RED}Error: Please provide a question to evaluate{Style.RESET_ALL}")
+            return
+
+        if not hasattr(self, 'evaluator'):
+            self.evaluator = QueryEvaluator(self.model_config)
+
+        print(f"{Fore.YELLOW}Evaluating query strategies...{Style.RESET_ALL}")
+
+        results = self.evaluator.compare_strategies(arg, self)
+
+        # Display results
+        comparison = results.get('comparison', {})
+        print(f"\n{Fore.CYAN}Evaluation Results:{Style.RESET_ALL}")
+        print(f"Cost savings: ${comparison.get('cost_savings', 0):.4f} "
+              f"({comparison.get('cost_savings_percentage', 0):.1f}%)")
+
+        quality_diff = comparison.get('quality_difference', {})
+        print(f"Quality impact: {quality_diff.get('overall_diff', 0):+.3f}")
+
+        print(f"\n{Fore.CYAN}Detailed Scores:{Style.RESET_ALL}")
+        for strategy in ['with_routing', 'without_routing']:
+            if strategy in results:
+                metrics = results[strategy]['metrics']
+                print(f"\n{strategy}:")
+                print(f"  Relevance: {metrics.relevance_score:.3f}")
+                print(f"  Completeness: {metrics.completeness_score:.3f}")
+                print(f"  Coherence: {metrics.coherence_score:.3f}")
+                print(f"  Cost: ${results[strategy]['cost']:.4f}")
+
+    def do_semantic_cache(self, arg):
+        """Manage semantic cache. Usage: /semantic-cache [stats|clear-expired]"""
+        if not hasattr(self, 'semantic_cache'):
+            from semantic_cache import SemanticCache
+            self.semantic_cache = SemanticCache()
+
+        if arg == "stats":
+            stats = self.semantic_cache.get_stats()
+            print(f"\n{Fore.CYAN}Semantic Cache Statistics:{Style.RESET_ALL}")
+            for key, value in stats.items():
+                print(f"{key}: {value}")
+
+        elif arg == "clear-expired":
+            self.semantic_cache.clear_expired()
+            print(f"{Fore.GREEN}Cleared expired entries{Style.RESET_ALL}")
+
+        else:
+            print("Usage: /semantic-cache [stats|clear-expired]")
+
+    def do_use_embeddings(self, arg):
+        """Toggle embedding-based routing. Usage: /use-embeddings [on|off]"""
+        if arg.lower() == "on":
+            if not hasattr(self, 'embedding_router'):
+                from embedding_router import EmbeddingRouter
+                self.embedding_router = EmbeddingRouter()
+
+                # Index existing summaries if available
+                if hasattr(self, 'summarizer') and self.summarizer.summaries:
+                    self.embedding_router.index_modules(self.summarizer.summaries)
+                    print(f"{Fore.GREEN}Embedding-based routing enabled{Style.RESET_ALL}")
+                else:
+                    print(f"{Fore.YELLOW}Run /summarize first to generate module summaries{Style.RESET_ALL}")
+
+            self.use_embedding_routing = True
+
+        elif arg.lower() == "off":
+            self.use_embedding_routing = False
+            print(f"{Fore.GREEN}Switched back to keyword-based routing{Style.RESET_ALL}")
+
+        else:
+            status = "on" if getattr(self, 'use_embedding_routing', False) else "off"
+            print(f"Embedding routing is currently: {status}")
+            print("Usage: /use-embeddings [on|off]")
 
     def do_load_session(self, arg):
         """Load session state. Usage: /load-session <filename>"""
