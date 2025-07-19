@@ -22,10 +22,12 @@ from colorama import init, Fore, Style
 # Import new modules
 from loaders.document_loader import DocumentLoader
 from loaders.course_loader import CourseModuleLoader
-from agents.routing_agent import RoutingAgent, QueryType
+from agents.routing_agent import QueryType
 from agents.module_agent import ModuleAgent
 from agents.document_agent import DocumentAgent, SynthesisAgent
 from prompt_manager import PromptManager
+from model_config import ModelConfig
+from interactive_session import InteractiveSession
 
 # Initialize colorama for colored output
 init()
@@ -101,7 +103,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
     def __init__(self, prompt_manager: Optional[PromptManager] = None):
         self.document_agents = []
         self.module_agents = {}  # New: module-based agents
-        self.routing_agent = RoutingAgent()  # New: routing
+        self.routing_agent = None  # Will be initialized when modules are added
         self.synthesis_agent = None
         self.prompt_manager = prompt_manager or PromptManager()
         self.cache = SimpleCache()
@@ -126,13 +128,11 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         try:
             agent = DocumentAgent(name, path, prompt_manager=self.prompt_manager)
             self.document_agents.append(agent)
-            print(
-                f"{Fore.GREEN}✓ Added document agent: {name}{Style.RESET_ALL}"  # pylint: disable=line-too-long
-            )
+            success_msg = f"✓ Added document agent: {name}"
+            print(f"{Fore.GREEN}{success_msg}{Style.RESET_ALL}")
         except (FileNotFoundError, ValueError) as e:
-            print(
-                f"{Fore.RED}✗ Failed to add document {name}: {e}{Style.RESET_ALL}"  # pylint: disable=line-too-long
-            )
+            error_msg = f"✗ Failed to add document {name}: {e}"
+            print(f"{Fore.RED}{error_msg}{Style.RESET_ALL}")
 
     def add_module(self, module_name: str, documents: List[Dict]) -> None:
         """Add a module agent for handling multiple related documents."""
@@ -205,8 +205,11 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         for _, module_agent in self.module_agents.items():
             all_agents.append(module_agent)
 
-        print(f"{Fore.CYAN}Querying {len(all_agents)} agents "
-              f"({len(self.document_agents)} documents, {len(self.module_agents)} modules)...{Style.RESET_ALL}") #pylint: disable=line-too-long
+        agent_count = len(all_agents)
+        doc_count = len(self.document_agents)
+        module_count = len(self.module_agents)
+        print(f"{Fore.CYAN}Querying {agent_count} agents "
+              f"({doc_count} documents, {module_count} modules)...{Style.RESET_ALL}")
 
         # Query all agents
         agent_responses = []
@@ -220,7 +223,10 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         # Synthesize responses
         print(f"{Fore.CYAN}Synthesizing responses...{Style.RESET_ALL}")
         if self.synthesis_agent is None:
-            self.synthesis_agent = SynthesisAgent(prompt_manager=self.prompt_manager)
+            self.synthesis_agent = SynthesisAgent(
+                model_config=self.prompt_manager.model_config,
+                prompt_manager=self.prompt_manager
+            )
         synthesis_result = self.synthesis_agent.synthesize(question, agent_responses)
 
         # Calculate totals
@@ -258,8 +264,6 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         })
 
         return result
-
-
 
     def _query_single_agent(self, question: str, routing_decision: Dict) -> Dict[str, Any]:
         """Query using single best agent for simple queries."""
@@ -303,7 +307,10 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         # Synthesize if multiple responses
         if len(agent_responses) > 1:
             if self.synthesis_agent is None:
-                self.synthesis_agent = SynthesisAgent(prompt_manager=self.prompt_manager)
+                self.synthesis_agent = SynthesisAgent(
+                    model_config=self.prompt_manager.model_config,
+                    prompt_manager=self.prompt_manager
+                )
             synthesis_result = self.synthesis_agent.synthesize(
                 question, agent_responses
             )
@@ -341,7 +348,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         result["routing_decision"] = routing_decision
         return result
 
-    def query_with_routing(self, question: str, use_cache: bool = True) -> Dict[str, Any]:
+    def query_with_routing(self, question: str, use_cache: bool = True) -> Dict[str, Any]:  # pylint: disable=too-many-locals
         """Query with intelligent routing based on content relevance."""
         start_time = time.time()
 
@@ -390,7 +397,10 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         # Synthesize responses
         print(f"{Fore.CYAN}Synthesizing responses...{Style.RESET_ALL}")
         if self.synthesis_agent is None:
-            self.synthesis_agent = SynthesisAgent(prompt_manager=self.prompt_manager)
+            self.synthesis_agent = SynthesisAgent(
+                model_config=self.prompt_manager.model_config,
+                prompt_manager=self.prompt_manager
+            )
         synthesis_result = self.synthesis_agent.synthesize(question, agent_responses)
 
         # Calculate totals
@@ -483,7 +493,8 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
                               '_max_modules_override',
                               self.routing_config['max_modules_default'])
         if len(relevant_modules) > max_modules:
-            print(f"{Fore.YELLOW}Limiting to top {max_modules} modules for cost control{Style.RESET_ALL}") #pylint: disable=line-too-long
+            limit_msg = f"Limiting to top {max_modules} modules for cost control"
+            print(f"{Fore.YELLOW}{limit_msg}{Style.RESET_ALL}")
             relevant_modules = relevant_modules[:max_modules]
 
         # Fallback: If no modules selected, use top 2
@@ -502,13 +513,13 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
             return "simple"
 
         # Comparison questions (likely need multiple modules)
-        if any(phrase in question_lower  # pylint: disable=line-too-long
-               for phrase in ["compare", "contrast", "versus", "vs", "difference between"]):
+        comparison_phrases = ["compare", "contrast", "versus", "vs", "difference between"]
+        if any(phrase in question_lower for phrase in comparison_phrases):
             return "comparison"
 
         # Synthesis questions (might need many modules)
-        if any(phrase in question_lower  # pylint: disable=line-too-long
-               for phrase in ["analyze", "design", "create", "evaluate", "how does"]):
+        synthesis_phrases = ["analyze", "design", "create", "evaluate", "how does"]
+        if any(phrase in question_lower for phrase in synthesis_phrases):
             return "synthesis"
 
         return "moderate"
@@ -538,7 +549,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
 
         # Add synthesis agent costs
         if self.synthesis_agent is not None:
-            synthesis_model = self.synthesis_agent.model
+            synthesis_model = self.synthesis_agent.model_name
             if synthesis_model not in costs_by_model:
                 costs_by_model[synthesis_model] = {"cost": 0.0, "tokens": 0}
             costs_by_model[synthesis_model]["cost"] += self.synthesis_agent.total_cost
@@ -619,7 +630,7 @@ def run_test_queries(prototype: SecondBrainPrototype):
         display_query_response(query, result)
 
 
-def interactive_mode(prototype: SecondBrainPrototype):
+def interactive_mode(prototype: SecondBrainPrototype):  # pylint: disable=too-many-locals,too-many-branches,too-many-statements,too-many-nested-blocks
     """Run interactive mode for user queries."""
     print(f"{Fore.GREEN}Interactive mode - type '/quit' to exit{Style.RESET_ALL}\n")
 
@@ -665,12 +676,12 @@ def interactive_mode(prototype: SecondBrainPrototype):
                 # Navigation commands
                 if cmd in ['/quit', '/exit', '/q']:
                     break
-                elif cmd in ['/help', '/?']:
+                if cmd in ['/help', '/?']:
                     print_help()
                     continue
 
                 # Prompt management commands
-                elif cmd == "/prompt-reload":
+                if cmd == "/prompt-reload":
                     reloaded = prototype.prompt_manager.reload_prompts()
                     print(f"Reloaded {len(reloaded)} prompts:")
                     for key, prompt in reloaded.items():
@@ -736,7 +747,7 @@ def interactive_mode(prototype: SecondBrainPrototype):
             print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
 
 
-def run_scale_test(prototype: SecondBrainPrototype):
+def run_scale_test(prototype: SecondBrainPrototype):  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     """Run scale testing with real course materials."""
     test_queries = [
         # Simple queries
@@ -807,7 +818,7 @@ def display_scale_test_results(results: List[Dict]):
     correct_routing = sum(1 for r in results if r['expected_type'] == r['actual_type'])
     routing_accuracy = correct_routing / len(results)
     print(
-        f"Routing Accuracy: {routing_accuracy:.1%}"  # pylint: disable=line-too-long
+        f"Routing Accuracy: {routing_accuracy:.1%}"
     )
 
     print(f"\n{Fore.BLUE}By Query Type:{Style.RESET_ALL}")
@@ -857,7 +868,7 @@ def _load_default_documents(prototype: SecondBrainPrototype):
             print(f"{Fore.RED}Warning: Document not found: {path}{Style.RESET_ALL}")
 
 
-def main():
+def main():  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     """Enhanced CLI interface."""
     parser = argparse.ArgumentParser(description="Second Brain Prototype - Scale Testing Version")
     parser.add_argument("command", choices=["query", "test", "costs", "clear-cache",
@@ -871,6 +882,16 @@ def main():
     parser.add_argument("--no-cache", action="store_true", help="Disable caching")
     parser.add_argument("--use-routing", action="store_true",
                        help="Use keyword-based routing to reduce costs")
+
+    # Model selection arguments
+    parser.add_argument('--document-model', type=str,
+                       help='Model to use for document agents')
+    parser.add_argument('--module-model', type=str,
+                       help='Model to use for module agents')
+    parser.add_argument('--synthesis-model', type=str,
+                       help='Model to use for synthesis agent')
+    parser.add_argument('--routing-model', type=str,
+                       help='Model to use for routing agent')
 
     # Prompt management arguments
     parser.add_argument('--prompt-dir', type=str, default='prompts',
@@ -886,6 +907,19 @@ def main():
 
     args = parser.parse_args()
 
+    # Initialize model configuration
+    model_config = ModelConfig()
+
+    # Apply model overrides from CLI
+    if args.document_model:
+        model_config.set_model('document', args.document_model)
+    if args.module_model:
+        model_config.set_model('module', args.module_model)
+    if args.synthesis_model:
+        model_config.set_model('synthesis', args.synthesis_model)
+    if args.routing_model:
+        model_config.set_model('routing', args.routing_model)
+
     # Initialize the prototype with custom prompt manager
     prompt_manager = PromptManager(args.prompt_dir)
 
@@ -899,6 +933,14 @@ def main():
     if args.synthesis_prompt:
         prompt_manager.set_custom_prompt_path('synthesis', args.synthesis_prompt)
 
+    if args.command == 'interactive':
+        # Launch interactive session
+        session = InteractiveSession()
+        session.model_config = model_config
+        session.prompt_manager = prompt_manager
+        session.cmdloop()
+        return
+
     prototype = SecondBrainPrototype(prompt_manager=prompt_manager)
 
     # Load documents
@@ -908,7 +950,7 @@ def main():
         _load_default_documents(prototype)
 
     if not prototype.document_agents and not prototype.module_agents:
-        error_msg = "Error: No document agents could be loaded. Please check the documents directory."  # pylint: disable=line-too-long
+        error_msg = "Error: No document agents could be loaded. Please check the documents directory." #pylint: disable=line-too-long
         print(f"{Fore.RED}{error_msg}{Style.RESET_ALL}")
         sys.exit(1)
 

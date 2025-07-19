@@ -8,30 +8,51 @@ from typing import List, Dict, Any, Optional
 import hashlib
 import time
 from langchain.schema import HumanMessage
-from agents.document_agent import DocumentAgent, DEFAULT_DOCUMENT_MODEL
+from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 from prompt_manager import PromptManager
+from model_config import ModelConfig
 
-class ModuleAgent(DocumentAgent):
+
+class ModuleAgent:  # pylint: disable=too-many-instance-attributes
     """Agent specialized for handling course module content."""
 
-    def __init__(self, module_name: str, documents: List[Dict],
-                 model: str = DEFAULT_DOCUMENT_MODEL,
+    def __init__(self, documents: List[Dict],
+                 model_config: Optional[ModelConfig] = None,
                  prompt_manager: Optional[PromptManager] = None):
-        # Use DocumentAgent's multi-document mode
-        super().__init__(module_name, model=model, documents=documents, prompt_manager=prompt_manager)
-        self.module_name = module_name
-        self.model = model
-        # Chunk all loaded documents
-        self.chunks = self._load_and_chunk_documents()
+        """Initialize the ModuleAgent with documents, model config, and prompt manager."""
+        self.documents = documents
+        self.model_config = model_config or ModelConfig()
+        self.prompt_manager = prompt_manager or PromptManager()
+
+        # Get model name from config
+        self.model_name = self.model_config.get_model_name("module")
+
+        # Initialize LLM based on provider
+        model_info = self.model_config.get_model_info("module")
+        if model_info.provider == "google":
+            self.llm = ChatGoogleGenerativeAI(model=self.model_name)
+        else:
+            self.llm = ChatAnthropic(model=self.model_name)
+
         self.total_cost = 0.0
         self.total_tokens = 0
+
+        # Chunk all loaded documents
+        self.chunks = self._load_and_chunk_documents()
 
     def _load_and_chunk_documents(self) -> List[Dict]:
         """Load and chunk all documents using semantic chunking."""
         chunks = []
-        for doc in self.contents:
-            content = doc['content']
-            doc_name = doc['name']
+        for doc in self.documents:
+            if hasattr(doc, 'page_content'):
+                content = doc.page_content
+                doc_name = (doc.metadata.get('source', 'Unknown')
+                           if hasattr(doc, 'metadata') else 'Unknown')
+            else:
+                content = doc.get('content', '')
+                doc_name = doc.get('source', 'Unknown')
+
             doc_chunks = self._semantic_chunk(content, doc_name)
             chunks.extend(doc_chunks)
         return chunks
@@ -85,18 +106,20 @@ class ModuleAgent(DocumentAgent):
         relevant_chunks = self.search_chunks(question, top_k=5)
         if not relevant_chunks:
             return {
-                "response": f"No relevant information found in {self.module_name}",
+                "answer": "No relevant information found in this module",
                 "tokens_used": 0,
                 "cost": 0.0,
-                "duration": 0.0,
-                "agent_name": self.module_name
+                "duration": 0.0
             }
+
         context_parts = []
         for chunk in relevant_chunks:
             context_parts.append(f"From {chunk['doc_name']}:\n{chunk['text']}")
+
         context = "\n\n---\n\n".join(context_parts)
         if len(context) > 8000:
             context = context[:8000] + "\n\n[Context truncated for length...]"
+
         system_prompt = self.prompt_manager.get_prompt("module")
         prompt = f"""{system_prompt}
 
@@ -114,9 +137,10 @@ Please provide a comprehensive answer based on the information in these excerpts
 4. Any limitations or caveats mentioned
 
 Provide a clear, concise response based solely on the information provided."""
+
         try:
             start_time = time.time()
-            response = self.llm.invoke([self._create_message(prompt)])
+            response = self.llm.invoke([HumanMessage(content=prompt)])
             duration = time.time() - start_time
             response_text = response.content if hasattr(response, 'content') else str(response)
             tokens_used = self._estimate_tokens(prompt, response_text)
@@ -124,22 +148,26 @@ Provide a clear, concise response based solely on the information provided."""
             self.total_cost += cost
             self.total_tokens += tokens_used
             return {
-                "response": response_text,
+                "answer": response_text,
                 "tokens_used": tokens_used,
                 "cost": cost,
-                "duration": duration,
-                "agent_name": self.module_name
+                "duration": duration
             }
-        except Exception as e: # pylint: disable=broad-exception-caught
-            print(f"Error querying {self.module_name}: {e}")
+        except (ValueError, AttributeError, RuntimeError) as e:
+            print(f"Error querying module: {e}")
             return {
-                "response": f"Error: {str(e)}",
+                "answer": f"Error: {str(e)}",
                 "tokens_used": 0,
                 "cost": 0.0,
-                "duration": 0.0,
-                "agent_name": self.module_name
+                "duration": 0.0
             }
 
-    def _create_message(self, content: str):
-        """Create a message for the LLM."""
-        return HumanMessage(content=content)
+    def _estimate_tokens(self, prompt: str, response: str) -> int:
+        """Estimate the number of tokens used for prompt and response."""
+        prompt_tokens = len(prompt) // 4
+        response_tokens = len(response) // 4
+        return prompt_tokens + response_tokens
+
+    def _calculate_cost(self, tokens: int) -> float:
+        """Calculate the estimated cost for the number of tokens used."""
+        return self.model_config.estimate_cost("module", int(tokens * 0.7), int(tokens * 0.3))

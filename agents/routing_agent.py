@@ -5,7 +5,12 @@ the appropriate processing strategy based on complexity, scope, and required res
 """
 
 from enum import Enum
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from langchain.schema import HumanMessage
+from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
+from prompt_manager import PromptManager
+from model_config import ModelConfig
 
 
 class QueryType(Enum):
@@ -31,15 +36,73 @@ class QueryType(Enum):
         }
         return complexity_mapping.get(level, cls.SINGLE_MODULE)
 
-class RoutingAgent:
+
+class RoutingAgent:  # pylint: disable=too-many-instance-attributes
     """Intelligent query routing based on complexity and scope."""
 
-    def __init__(self):
+    def __init__(self, available_modules: List[str],
+                 model_config: Optional[ModelConfig] = None,
+                 prompt_manager: Optional[PromptManager] = None):
+        """Initialize the RoutingAgent with available modules, model config, and prompt manager."""
+        self.available_modules = available_modules
+        self.model_config = model_config or ModelConfig()
+        self.prompt_manager = prompt_manager or PromptManager()
+
+        # Get model name from config
+        self.model_name = self.model_config.get_model_name("routing")
+
+        # Initialize LLM based on provider
+        model_info = self.model_config.get_model_info("routing")
+        if model_info.provider == "google":
+            self.llm = ChatGoogleGenerativeAI(model=self.model_name)
+        else:
+            self.llm = ChatAnthropic(model=self.model_name)
+
         self.complexity_keywords = {
             QueryType.SIMPLE: ["what is", "define", "when was", "who is"],
             QueryType.CROSS_MODULE: ["compare", "contrast", "across", "between"],
             QueryType.SYNTHESIS: ["analyze", "evaluate", "design", "create", "how does"]
         }
+
+    def route_query(self, query: str) -> List[str]:
+        """Route a query to appropriate modules."""
+        if not self.available_modules:
+            return []
+
+        if len(self.available_modules) == 1:
+            return self.available_modules
+
+        # Use LLM to determine which modules are most relevant
+        try:
+            system_prompt = self.prompt_manager.get_prompt("routing")
+            prompt = f"""{system_prompt}
+
+Available modules: {', '.join(self.available_modules)}
+
+Query: {query}
+
+Based on the query, which modules are most likely to contain relevant information?
+Return only the module names separated by commas, no additional text."""
+
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            response_text = response.content if hasattr(response, 'content') else str(response)
+
+            # Parse the response to extract module names
+            selected_modules = []
+            for module in self.available_modules:
+                if module.lower() in response_text.lower():
+                    selected_modules.append(module)
+
+            # If no modules were selected, return all modules
+            if not selected_modules:
+                return self.available_modules
+
+            return selected_modules
+
+        except (ValueError, AttributeError, RuntimeError) as e:
+            print(f"Error in routing query: {e}")
+            # Fallback: return all modules
+            return self.available_modules
 
     def analyze_query(self, query: str) -> Dict[str, Any]:
         """Analyze query to determine routing strategy."""
