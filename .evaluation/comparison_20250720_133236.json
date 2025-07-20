@@ -1,0 +1,64 @@
+{
+  "question": "Explain the key concepts in distributed systems",
+  "results": {
+    "with_routing": {
+      "response": "The provided text focuses on skip lists, a data structure, and doesn't contain information on distributed systems.  Therefore, I cannot answer your question about key concepts in distributed systems using the given excerpt.  The excerpt describes algorithms and data structures for efficient searching and sorting within a single system, not across multiple systems which is the defining characteristic of distributed systems.\n",
+      "metrics": {
+        "query_id": "3dd75719",
+        "question": "Explain the key concepts in distributed systems",
+        "routing_used": true,
+        "modules_queried": [
+          "cpsc_8400"
+        ],
+        "response_length": 427,
+        "response_time": 0.971034,
+        "estimated_cost": 0.000328725,
+        "relevance_score": 1.0,
+        "completeness_score": 0.0,
+        "coherence_score": 1.0,
+        "alternative_cost": null,
+        "cost_savings": null,
+        "user_rating": null,
+        "user_feedback": null,
+        "timestamp": "2025-07-20T13:32:33.028342"
+      },
+      "cost": 0.000328725,
+      "time": 0.971034
+    },
+    "without_routing": {
+      "response": "The provided text focuses on skip lists, a data structure, and does not contain information about distributed systems.  Therefore, I cannot answer your question using the given context.  The excerpt describes skip lists, their implementation, and analysis of their performance using concepts like randomized reduction, but it does not discuss distributed systems concepts such as distributed consensus, fault tolerance, consistency, or concurrency control.\n",
+      "metrics": {
+        "query_id": "1b2a2682",
+        "question": "Explain the key concepts in distributed systems",
+        "routing_used": false,
+        "modules_queried": [
+          "cpsc_8400"
+        ],
+        "response_length": 457,
+        "response_time": 0.921908,
+        "estimated_cost": 0.000329775,
+        "relevance_score": 1.0,
+        "completeness_score": 0.0,
+        "coherence_score": 1.0,
+        "alternative_cost": null,
+        "cost_savings": null,
+        "user_rating": null,
+        "user_feedback": null,
+        "timestamp": "2025-07-20T13:32:35.082557"
+      },
+      "cost": 0.000329775,
+      "time": 0.921908
+    },
+    "comparison": {
+      "cost_savings": 1.0499999999999984e-06,
+      "cost_savings_percentage": 0.3183989083465995,
+      "quality_difference": {
+        "relevance_diff": 0.0,
+        "completeness_diff": 0,
+        "coherence_diff": 0.0,
+        "overall_diff": 0.0
+      }
+    }
+  },
+  "timestamp": "2025-07-20T13:32:36.140452"
+}

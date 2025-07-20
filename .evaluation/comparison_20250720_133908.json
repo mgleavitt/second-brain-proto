@@ -1,0 +1,64 @@
+{
+  "question": "Explain the key concepts in distributed systems",
+  "results": {
+    "with_routing": {
+      "response": "The provided text focuses on skip lists, a data structure, and does not contain information about distributed systems.  Therefore, I cannot answer your question using the given context.  The excerpt describes the implementation and analysis of skip lists, including concepts like logarithmic time complexity, randomization for balancing, and probabilistic analysis using the randomized reduction lemma. However, none of this relates to distributed systems.\n",
+      "metrics": {
+        "query_id": "3dc2a647",
+        "question": "Explain the key concepts in distributed systems",
+        "routing_used": true,
+        "modules_queried": [
+          "cpsc_8400"
+        ],
+        "response_length": 457,
+        "response_time": 1.040448,
+        "estimated_cost": 0.000329775,
+        "relevance_score": 1.0,
+        "completeness_score": 1.0,
+        "coherence_score": 1.0,
+        "alternative_cost": null,
+        "cost_savings": null,
+        "user_rating": null,
+        "user_feedback": null,
+        "timestamp": "2025-07-20T13:39:05.172536"
+      },
+      "cost": 0.000329775,
+      "time": 1.040448
+    },
+    "without_routing": {
+      "response": "The provided text focuses on skip lists, a data structure, and does not contain information on distributed systems.  Therefore, I cannot answer your question using the given context.  The excerpt describes the implementation and analysis of skip lists, including their use of randomization for balancing, logarithmic time complexity for operations, and the use of the randomized reduction lemma for analysis.  However, there is no mention of distributed systems concepts like concurrency, fault tolerance, consistency, or distributed consensus algorithms.\n",
+      "metrics": {
+        "query_id": "69dff697",
+        "question": "Explain the key concepts in distributed systems",
+        "routing_used": false,
+        "modules_queried": [
+          "cpsc_8400"
+        ],
+        "response_length": 556,
+        "response_time": 0.942289,
+        "estimated_cost": 0.00033345,
+        "relevance_score": 1.0,
+        "completeness_score": 0.0,
+        "coherence_score": 1.0,
+        "alternative_cost": null,
+        "cost_savings": null,
+        "user_rating": null,
+        "user_feedback": null,
+        "timestamp": "2025-07-20T13:39:07.219513"
+      },
+      "cost": 0.00033345,
+      "time": 0.942289
+    },
+    "comparison": {
+      "cost_savings": 3.6750000000000216e-06,
+      "cost_savings_percentage": 1.1021142600090033,
+      "quality_difference": {
+        "relevance_diff": 0.0,
+        "completeness_diff": 1.0,
+        "coherence_diff": 0.0,
+        "overall_diff": 0.33333333333333337
+      }
+    }
+  },
+  "timestamp": "2025-07-20T13:39:08.407492"
+}

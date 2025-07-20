@@ -70,7 +70,15 @@ class ModuleSummarizer:
 
     def _compute_content_hash(self, documents: List[Any]) -> str:
         """Compute hash of document contents to detect changes."""
-        content = "".join(sorted([doc.page_content for doc in documents]))
+        content_parts = []
+        for doc in documents:
+            if hasattr(doc, 'page_content'):
+                content_parts.append(doc.page_content)
+            elif isinstance(doc, dict) and 'content' in doc:
+                content_parts.append(doc['content'])
+            else:
+                content_parts.append(str(doc))
+        content = "".join(sorted(content_parts))
         return hashlib.sha256(content.encode()).hexdigest()[:16]
 
     def get_or_generate_summary(self, module_name: str, documents: List[Any],
@@ -104,7 +112,15 @@ class ModuleSummarizer:
             chunk_overlap=1000
         )
 
-        all_content = "\n\n".join([doc.page_content for doc in documents])
+        content_parts = []
+        for doc in documents:
+            if hasattr(doc, 'page_content'):
+                content_parts.append(doc.page_content)
+            elif isinstance(doc, dict) and 'content' in doc:
+                content_parts.append(doc['content'])
+            else:
+                content_parts.append(str(doc))
+        all_content = "\n\n".join(content_parts)
         chunks = text_splitter.split_text(all_content)
 
         # Take first few chunks that fit in context
@@ -160,7 +176,14 @@ Generate a JSON summary following the specified format."""
             }
 
         # Calculate total tokens (approximate)
-        total_tokens = sum(len(doc.page_content.split()) * 1.3 for doc in documents)
+        total_tokens = 0
+        for doc in documents:
+            if hasattr(doc, 'page_content'):
+                total_tokens += len(doc.page_content.split()) * 1.3
+            elif isinstance(doc, dict) and 'content' in doc:
+                total_tokens += len(doc['content'].split()) * 1.3
+            else:
+                total_tokens += len(str(doc).split()) * 1.3
 
         return ModuleSummary(
             module_name=module_name,

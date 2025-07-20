@@ -3,7 +3,7 @@ import cmd
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 import logging
 from datetime import datetime
 from colorama import init, Fore, Style
@@ -170,7 +170,11 @@ Type /help for available commands
             if self.use_routing and not no_routing and getattr(self, 'use_embedding_routing', False):
                 if hasattr(self, 'embedding_router'):
                     routed_modules = self.embedding_router.route_query(question)
-                    selected_modules = [m[0] for m in routed_modules]
+                    # Filter to only include modules that actually exist
+                    selected_modules = [m[0] for m in routed_modules if m[0] in self.module_agents]
+                    if not selected_modules:
+                        # Fall back to all available modules if routing fails
+                        selected_modules = list(self.module_agents.keys())
                     print(f"{Fore.CYAN}Embedding routing to: {selected_modules}{Style.RESET_ALL}")
                 else:
                     # Fall back to keyword routing
@@ -232,6 +236,72 @@ Type /help for available commands
         except (ValueError, AttributeError, RuntimeError) as e:
             print(f"{Fore.RED}Error processing query: {e}{Style.RESET_ALL}")
             self.logger.exception("Error in query command")
+
+    def query(self, question: str) -> Dict[str, Any]:
+        """Query method for evaluation framework compatibility."""
+        if not self.module_agents and not self.document_agents:
+            return {
+                'answer': 'No documents loaded',
+                'cost': 0.0,
+                'modules': []
+            }
+
+        try:
+            start_time = datetime.now()
+
+            # Route using embeddings if enabled
+            if self.use_routing and getattr(self, 'use_embedding_routing', False):
+                if hasattr(self, 'embedding_router'):
+                    routed_modules = self.embedding_router.route_query(question)
+                    # Filter to only include modules that actually exist
+                    selected_modules = [m[0] for m in routed_modules if m[0] in self.module_agents]
+                    if not selected_modules:
+                        # Fall back to all available modules if routing fails
+                        selected_modules = list(self.module_agents.keys())
+                else:
+                    # Fall back to keyword routing
+                    selected_modules = self.routing_agent.route_query(question)
+            elif self.use_routing and self.routing_agent:
+                selected_modules = self.routing_agent.route_query(question)
+            else:
+                selected_modules = list(self.module_agents.keys())
+
+            # Query selected modules
+            responses = {}
+            total_cost = 0.0
+
+            for module_name in selected_modules:
+                if module_name in self.module_agents:
+                    response = self.module_agents[module_name].query(question)
+                    responses[module_name] = response
+                    total_cost += response.get('cost', 0)
+
+            # Synthesize if multiple responses
+            if len(responses) > 1 and self.synthesis_agent:
+                synthesis_result = self.synthesis_agent.synthesize(question, responses)
+                final_answer = synthesis_result['synthesis']
+                total_cost += synthesis_result.get('cost', 0)
+            else:
+                # Single response
+                final_answer = next(iter(responses.values()))['answer']
+
+            # Calculate time
+            elapsed_time = (datetime.now() - start_time).total_seconds()
+
+            return {
+                'answer': final_answer,
+                'cost': total_cost,
+                'modules': selected_modules,
+                'time': elapsed_time
+            }
+
+        except Exception as e:
+            return {
+                'answer': f'Error processing query: {e}',
+                'cost': 0.0,
+                'modules': [],
+                'time': 0.0
+            }
 
     def do_model(self, arg):
         """Set model for an agent type. Usage: /model <agent_type> <model_name>"""
@@ -469,8 +539,18 @@ Type /help for available commands
 
                 # Index existing summaries if available
                 if hasattr(self, 'summarizer') and self.summarizer.summaries:
-                    self.embedding_router.index_modules(self.summarizer.summaries)
-                    print(f"{Fore.GREEN}Embedding-based routing enabled{Style.RESET_ALL}")
+                    # Filter summaries to only include modules that actually exist in the session
+                    available_modules = set(self.module_agents.keys())
+                    filtered_summaries = {
+                        name: summary for name, summary in self.summarizer.summaries.items()
+                        if name in available_modules
+                    }
+
+                    if filtered_summaries:
+                        self.embedding_router.index_modules(filtered_summaries)
+                        print(f"{Fore.GREEN}Embedding-based routing enabled for {len(filtered_summaries)} modules{Style.RESET_ALL}")
+                    else:
+                        print(f"{Fore.YELLOW}No summaries available for loaded modules. Run /summarize first.{Style.RESET_ALL}")
                 else:
                     print(f"{Fore.YELLOW}Run /summarize first to generate module summaries{Style.RESET_ALL}")
 
@@ -634,7 +714,7 @@ Type /help for available commands
         """Handle commands that don't start with /"""
         if line.startswith('/'):
             cmd_name = line.split()[0][1:]  # Remove the /
-            remainder = line[len(cmd_name)+1:].strip()
+            remainder = line[len(cmd_name)+2:].strip()  # +2 to account for / and space
             if hasattr(self, f'do_{cmd_name}'):
                 func = getattr(self, f'do_{cmd_name}')
                 if callable(func):

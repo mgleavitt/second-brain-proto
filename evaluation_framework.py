@@ -204,11 +204,28 @@ Provide your evaluation as JSON with this format:
     def _save_comparison(self, question: str, results: Dict[str, Any]):
         """Save comparison results to file."""
         filename = self.results_dir / f"comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+        # Convert results to JSON-serializable format
+        serializable_results = {}
+        for k, v in results.items():
+            if k == 'metrics':
+                # Skip metrics for now as they're not needed in the saved file
+                continue
+            elif isinstance(v, dict):
+                # Handle nested dictionaries
+                serializable_results[k] = {}
+                for nested_k, nested_v in v.items():
+                    if nested_k == 'metrics':
+                        serializable_results[k][nested_k] = nested_v.to_dict()
+                    else:
+                        serializable_results[k][nested_k] = nested_v
+            else:
+                serializable_results[k] = v
+
         with open(filename, 'w') as f:
             json.dump({
                 'question': question,
-                'results': {k: v if k != 'metrics' else v.to_dict()
-                          for k, v in results.items()},
+                'results': serializable_results,
                 'timestamp': datetime.now().isoformat()
             }, f, indent=2)
 
