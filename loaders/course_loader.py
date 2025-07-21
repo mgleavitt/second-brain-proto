@@ -1,8 +1,13 @@
-from pathlib import Path
-from typing import Dict, List, Optional
-import json
+"""Course module loader for organizing and loading educational materials.
 
-class CourseModuleLoader:
+This module provides functionality to load course materials organized by modules,
+including transcripts and papers from a structured directory hierarchy.
+"""
+
+from pathlib import Path
+from typing import Dict, List
+
+class CourseModuleLoader:  # pylint: disable=too-few-public-methods
     """Specialized loader for course materials organized by modules."""
 
     def __init__(self, course_root: Path):

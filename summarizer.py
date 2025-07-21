@@ -1,5 +1,12 @@
+"""Module for generating and caching summaries for educational modules.
+
+This module provides functionality to create comprehensive summaries of educational
+content, cache them for efficiency, and use them for improved routing decisions.
+"""
+
 import json
 import hashlib
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -7,6 +14,7 @@ import logging
 from dataclasses import dataclass, asdict
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_google_genai import ChatGoogleGenerativeAI
 from model_config import ModelConfig
 from prompt_manager import PromptManager
 
@@ -23,13 +31,15 @@ class ModuleSummary:
     model_used: str
 
     def to_dict(self) -> Dict[str, Any]:
+        """Convert the summary to a dictionary representation."""
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ModuleSummary':
+        """Create a ModuleSummary instance from a dictionary."""
         return cls(**data)
 
-class ModuleSummarizer:
+class ModuleSummarizer:  # pylint: disable=too-many-instance-attributes
     """Generate and cache summaries for modules to improve routing efficiency."""
 
     SUMMARY_CACHE_FILE = "module_summaries.json"
@@ -37,6 +47,13 @@ class ModuleSummarizer:
     def __init__(self, model_config: Optional[ModelConfig] = None,
                  prompt_manager: Optional[PromptManager] = None,
                  cache_dir: str = ".cache"):
+        """Initialize the ModuleSummarizer.
+
+        Args:
+            model_config: Configuration for the language model
+            prompt_manager: Manager for prompts
+            cache_dir: Directory to store cached summaries
+        """
         self.model_config = model_config or ModelConfig()
         self.prompt_manager = prompt_manager or PromptManager()
         self.cache_dir = Path(cache_dir)
@@ -52,21 +69,21 @@ class ModuleSummarizer:
         """Load cached summaries from disk."""
         if self.cache_file.exists():
             try:
-                with open(self.cache_file, 'r') as f:
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 return {k: ModuleSummary.from_dict(v) for k, v in data.items()}
-            except Exception as e:
-                self.logger.error(f"Error loading summary cache: {e}")
+            except (json.JSONDecodeError, IOError) as e:
+                self.logger.error("Error loading summary cache: %s", e)
         return {}
 
     def _save_cache(self):
         """Save summaries to disk."""
         try:
             data = {k: v.to_dict() for k, v in self.summaries.items()}
-            with open(self.cache_file, 'w') as f:
+            with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
-        except Exception as e:
-            self.logger.error(f"Error saving summary cache: {e}")
+        except IOError as e:
+            self.logger.error("Error saving summary cache: %s", e)
 
     def _compute_content_hash(self, documents: List[Any]) -> str:
         """Compute hash of document contents to detect changes."""
@@ -90,11 +107,12 @@ class ModuleSummarizer:
         if not force_regenerate and module_name in self.summaries:
             cached = self.summaries[module_name]
             if cached.content_hash == content_hash:
-                self.logger.info(f"Using cached summary for {module_name}")
+                self.logger.info("Using cached summary for %s", module_name)
                 return cached
 
         # Generate new summary
-        self.logger.info(f"Generating summary for {module_name} ({len(documents)} documents)")
+        self.logger.info("Generating summary for %s (%d documents)",
+                        module_name, len(documents))
         summary = self._generate_summary(module_name, documents, content_hash)
 
         # Cache it
@@ -112,6 +130,33 @@ class ModuleSummarizer:
             chunk_overlap=1000
         )
 
+        # Extract content from documents
+        content_parts = self._extract_document_content(documents)
+        all_content = "\n\n".join(content_parts)
+        chunks = text_splitter.split_text(all_content)
+
+        # Take first few chunks that fit in context
+        content_sample = "\n\n".join(chunks[:3])  # Adjust based on model context
+
+        # Generate summary using LLM
+        result = self._call_llm_for_summary(module_name, content_sample)
+
+        # Calculate total tokens (approximate)
+        total_tokens = self._calculate_total_tokens(documents)
+
+        return ModuleSummary(
+            module_name=module_name,
+            summary=result.get("summary", ""),
+            key_topics=result.get("key_topics", []),
+            document_count=len(documents),
+            total_tokens=int(total_tokens),
+            content_hash=content_hash,
+            created_at=datetime.now().isoformat(),
+            model_used=self.model_config.get_model_name("summarizer")
+        )
+
+    def _extract_document_content(self, documents: List[Any]) -> List[str]:
+        """Extract content from various document types."""
         content_parts = []
         for doc in documents:
             if hasattr(doc, 'page_content'):
@@ -120,13 +165,10 @@ class ModuleSummarizer:
                 content_parts.append(doc['content'])
             else:
                 content_parts.append(str(doc))
-        all_content = "\n\n".join(content_parts)
-        chunks = text_splitter.split_text(all_content)
+        return content_parts
 
-        # Take first few chunks that fit in context
-        content_sample = "\n\n".join(chunks[:3])  # Adjust based on model context
-
-        # Create summarization prompt
+    def _call_llm_for_summary(self, module_name: str, content_sample: str) -> Dict[str, Any]:
+        """Call the LLM to generate a summary."""
         system_prompt = """You are a module summarizer. Create a concise summary that captures:
 1. The main purpose and topics covered in this module
 2. Key concepts, theories, or techniques discussed
@@ -139,8 +181,6 @@ Format your response as JSON with the following structure:
     "key_topics": ["topic1", "topic2", ...]
 }"""
 
-                # Get summary from LLM
-        from langchain_google_genai import ChatGoogleGenerativeAI
         llm = ChatGoogleGenerativeAI(
             model=self.model_config.get_model_name("summarizer"),
             temperature=0.3,
@@ -160,23 +200,22 @@ Generate a JSON summary following the specified format."""
 
         # Parse response
         try:
-            import re
             json_match = re.search(r'\{.*\}', response.content, re.DOTALL)
             if json_match:
-                result = json.loads(json_match.group())
-            else:
-                result = {
-                    "summary": response.content[:500],
-                    "key_topics": []
-                }
-        except:
-            result = {
-                "summary": f"Module {module_name} containing {len(documents)} documents",
+                return json.loads(json_match.group())
+            return {
+                "summary": response.content[:500],
+                "key_topics": []
+            }
+        except (json.JSONDecodeError, AttributeError):
+            return {
+                "summary": f"Module {module_name} summary generation failed",
                 "key_topics": []
             }
 
-        # Calculate total tokens (approximate)
-        total_tokens = 0
+    def _calculate_total_tokens(self, documents: List[Any]) -> float:
+        """Calculate approximate total tokens in documents."""
+        total_tokens = 0.0
         for doc in documents:
             if hasattr(doc, 'page_content'):
                 total_tokens += len(doc.page_content.split()) * 1.3
@@ -184,17 +223,7 @@ Generate a JSON summary following the specified format."""
                 total_tokens += len(doc['content'].split()) * 1.3
             else:
                 total_tokens += len(str(doc).split()) * 1.3
-
-        return ModuleSummary(
-            module_name=module_name,
-            summary=result.get("summary", ""),
-            key_topics=result.get("key_topics", []),
-            document_count=len(documents),
-            total_tokens=int(total_tokens),
-            content_hash=content_hash,
-            created_at=datetime.now().isoformat(),
-            model_used=self.model_config.get_model_name("summarizer")
-        )
+        return total_tokens
 
     def update_routing_weights(self, summaries: Dict[str, ModuleSummary]) -> Dict[str, float]:
         """Generate routing weights based on module summaries."""

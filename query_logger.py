@@ -34,7 +34,7 @@ class QueryLogger:
             except (OSError, ValueError, json.JSONDecodeError) as e:
                 print(f"Warning: Could not load existing query log: {e}")
 
-    def log_query(self, query: str, answer: str, cost: float,
+    def log_query(self, query: str, answer: str, cost: float,  # pylint: disable=too-many-arguments,too-many-positional-arguments
                   elapsed_time: float, metadata: Optional[Dict[str, Any]] = None):
         """Log a query with its results and metrics."""
         log_entry = {

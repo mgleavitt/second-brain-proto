@@ -3,24 +3,32 @@
 
 import time
 from colorama import init, Fore, Style
+from summarizer import ModuleSummarizer, ModuleSummary
+from model_config import ModelConfig
+from semantic_cache import SemanticCache
+from embedding_router import EmbeddingRouter
+from evaluation_framework import QueryEvaluator
+
 init(autoreset=True)
+
+
+class DummyDoc:  # pylint: disable=too-few-public-methods
+    """Dummy document class for testing purposes."""
+
+    def __init__(self, content):
+        self.page_content = content
+
 
 def test_module_summaries():
     """Test module summarization."""
     print(f"\n{Fore.CYAN}Testing Module Summaries...{Style.RESET_ALL}")
 
-    from summarizer import ModuleSummarizer
-    from model_config import ModelConfig
-
     summarizer = ModuleSummarizer(ModelConfig())
 
     # Test with dummy documents
-    class DummyDoc:
-        def __init__(self, content):
-            self.page_content = content
-
     docs = [
-        DummyDoc("This module covers machine learning fundamentals including supervised learning, neural networks, and deep learning."),
+        DummyDoc("This module covers machine learning fundamentals including supervised learning, "
+                "neural networks, and deep learning."),
         DummyDoc("We explore classification, regression, and clustering algorithms."),
         DummyDoc("Topics include backpropagation, gradient descent, and optimization.")
     ]
@@ -30,13 +38,12 @@ def test_module_summaries():
     print(f"Module: {summary.module_name}")
     print(f"Summary: {summary.summary[:200]}...")
     print(f"Key topics: {summary.key_topics}")
-    print(f"✓ Summarization working")
+    print("✓ Summarization working")
+
 
 def test_semantic_cache():
     """Test semantic caching."""
     print(f"\n{Fore.CYAN}Testing Semantic Cache...{Style.RESET_ALL}")
-
-    from semantic_cache import SemanticCache
 
     cache = SemanticCache(similarity_threshold=0.8)
 
@@ -62,12 +69,10 @@ def test_semantic_cache():
     stats = cache.get_stats()
     print(f"Cache stats: {stats}")
 
+
 def test_embedding_routing():
     """Test embedding-based routing."""
     print(f"\n{Fore.CYAN}Testing Embedding Router...{Style.RESET_ALL}")
-
-    from embedding_router import EmbeddingRouter
-    from summarizer import ModuleSummary
 
     router = EmbeddingRouter()
 
@@ -111,18 +116,18 @@ def test_embedding_routing():
         explanation = router.explain_routing(query, results[0][0])
         print(f"Routing explanation: {explanation}")
 
+
 def test_evaluation_framework():
     """Test query evaluation."""
     print(f"\n{Fore.CYAN}Testing Evaluation Framework...{Style.RESET_ALL}")
-
-    from evaluation_framework import QueryEvaluator, EvaluationMetrics
 
     evaluator = QueryEvaluator()
 
     # Test single evaluation
     metrics = evaluator.evaluate_response(
         question="What is gradient descent?",
-        response="Gradient descent is an optimization algorithm used to minimize the cost function...",
+        response=("Gradient descent is an optimization algorithm used to "
+                 "minimize the cost function..."),
         metadata={
             'routing_used': True,
             'modules_queried': ['ML_Fundamentals'],
@@ -131,11 +136,12 @@ def test_evaluation_framework():
         }
     )
 
-    print(f"Evaluation scores:")
-    print(f"  Relevance: {metrics.relevance_score:.3f}")
-    print(f"  Completeness: {metrics.completeness_score:.3f}")
-    print(f"  Coherence: {metrics.coherence_score:.3f}")
+    print("Evaluation scores:")
+    print(f"  Relevance: {metrics.quality.relevance_score:.3f}")
+    print(f"  Completeness: {metrics.quality.completeness_score:.3f}")
+    print(f"  Coherence: {metrics.quality.coherence_score:.3f}")
     print(f"  Overall: {metrics.overall_score():.3f}")
+
 
 if __name__ == "__main__":
     print(f"{Fore.CYAN}{'='*60}")

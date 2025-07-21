@@ -16,6 +16,8 @@ try:
 except ImportError:
     FAISS_AVAILABLE = False
 
+
+
 # Try to import sentence_transformers
 try:
     from sentence_transformers import SentenceTransformer
@@ -52,7 +54,7 @@ class SemanticCache:  # pylint: disable=too-many-instance-attributes
         if not FAISS_AVAILABLE:
             raise ImportError("faiss-cpu not installed. Please install with: pip install faiss-cpu")
 
-        self.index = faiss.IndexFlatL2(self.embedding_dim)
+        self.index: Any = faiss.IndexFlatL2(self.embedding_dim)
 
         # Storage for cached data
         self.cache_data: Dict[str, Dict[str, Any]] = {}
@@ -73,8 +75,8 @@ class SemanticCache:  # pylint: disable=too-many-instance-attributes
 
                     # Rebuild FAISS index
                     if self.query_embeddings:
-                        embeddings = np.array(list(self.query_embeddings.values()))
-                        self.index.add(embeddings)
+                        embeddings: np.ndarray = np.array(list(self.query_embeddings.values()))
+                        self.index.add(embeddings)  # pylint: disable=no-value-for-parameter  # TODO: drop when FAISS ships stubs
 
                 self.logger.info("Loaded %d cached queries", len(self.cache_data))
             except (pickle.PickleError, KeyError, ValueError) as e:
@@ -117,11 +119,13 @@ class SemanticCache:  # pylint: disable=too-many-instance-attributes
             return None
 
         # Embed query
-        query_embedding = self.embed_model.encode([query])[0]
+        query_embedding: np.ndarray = self.embed_model.encode([query])[0]
 
         # Search for similar queries
         k = min(5, len(self.query_embeddings))  # Search top 5
-        distances, indices = self.index.search(
+        distances: np.ndarray
+        indices: np.ndarray
+        distances, indices = self.index.search(  # pylint: disable=no-value-for-parameter  # TODO: drop when FAISS ships stubs
             query_embedding.reshape(1, -1), k
         )
 
@@ -147,7 +151,7 @@ class SemanticCache:  # pylint: disable=too-many-instance-attributes
         query_hash = self._get_query_hash(query)
 
         # Embed query
-        query_embedding = self.embed_model.encode([query])[0]
+        query_embedding: np.ndarray = self.embed_model.encode([query])[0]
 
         # Store in cache
         self.cache_data[query_hash] = {
@@ -162,7 +166,7 @@ class SemanticCache:  # pylint: disable=too-many-instance-attributes
             self._rebuild_index()
 
         self.query_embeddings[query_hash] = query_embedding
-        self.index.add(query_embedding.reshape(1, -1))
+        self.index.add(query_embedding.reshape(1, -1))  # pylint: disable=no-value-for-parameter  # TODO: drop when FAISS ships stubs
 
         # Save to disk
         self._save_cache()
@@ -173,8 +177,8 @@ class SemanticCache:  # pylint: disable=too-many-instance-attributes
         """Rebuild FAISS index from scratch."""
         self.index = faiss.IndexFlatL2(self.embedding_dim)
         if self.query_embeddings:
-            embeddings = np.array(list(self.query_embeddings.values()))
-            self.index.add(embeddings)
+            embeddings: np.ndarray = np.array(list(self.query_embeddings.values()))
+            self.index.add(embeddings)  # pylint: disable=no-value-for-parameter  # TODO: drop when FAISS ships stubs
 
     def clear_expired(self):
         """Remove expired entries."""

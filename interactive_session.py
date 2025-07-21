@@ -22,10 +22,23 @@ from loaders.document_loader import DocumentLoader
 from summarizer import ModuleSummarizer
 from evaluation_framework import QueryEvaluator
 
+# Conditional imports for optional features
+try:
+    from semantic_cache import SemanticCache
+    SEMANTIC_CACHE_AVAILABLE = True
+except ImportError:
+    SEMANTIC_CACHE_AVAILABLE = False
+
+try:
+    from embedding_router import EmbeddingRouter
+    EMBEDDING_ROUTER_AVAILABLE = True
+except ImportError:
+    EMBEDDING_ROUTER_AVAILABLE = False
+
 init(autoreset=True)  # Initialize colorama
 
 
-class InteractiveSession(cmd.Cmd):  # pylint: disable=too-many-instance-attributes
+class InteractiveSession(cmd.Cmd):  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """Interactive command-line interface for the second brain system."""
 
     intro = f"""
@@ -53,6 +66,13 @@ Type /help for available commands
         self.use_routing = True
         self.use_cache = True
         self.loaded_paths: List[str] = []
+
+        # Optional features
+        self.summarizer: Optional[ModuleSummarizer] = None
+        self.evaluator: Optional[QueryEvaluator] = None
+        self.semantic_cache: Optional[Any] = None
+        self.embedding_router: Optional[Any] = None
+        self.use_embedding_routing = False
 
         # Configure logging
         logging.basicConfig(level=logging.INFO,
@@ -126,7 +146,7 @@ Type /help for available commands
             print(f"{Fore.RED}Error loading documents: {e}{Style.RESET_ALL}")
             self.logger.exception("Error in load command")
 
-    def do_query(self, arg):  # pylint: disable=too-many-locals
+    def do_query(self, arg):
         """Query the loaded documents. Usage: /query <question> [--no-cache] [--no-routing]"""
         if not arg:
             print(f"{Fore.RED}Error: Please provide a question{Style.RESET_ALL}")
@@ -145,13 +165,29 @@ Type /help for available commands
             print(f"{Fore.RED}Error: No documents loaded. Use /load first{Style.RESET_ALL}")
             return
 
+        # Check caches first
+        if self._check_caches(question, no_cache):
+            return
+
+        print(f"{Fore.YELLOW}Processing query...{Style.RESET_ALL}")
+
+        try:
+            result = self._process_query(question, no_routing)
+            self._display_query_result(result)
+        except (ValueError, AttributeError, RuntimeError) as e:
+            print(f"{Fore.RED}Error processing query: {e}{Style.RESET_ALL}")
+            self.logger.exception("Error in query command")
+
+    def _check_caches(self, question: str, no_cache: bool) -> bool:
+        """Check semantic and regular caches for existing results."""
         # Check semantic cache first
-        if self.use_cache and not no_cache and hasattr(self, 'semantic_cache'):
+        if (self.use_cache and not no_cache and
+            self.semantic_cache is not None):
             cached_result = self.semantic_cache.get(question)
             if cached_result:
                 print(f"{Fore.YELLOW}[Using semantic cache]{Style.RESET_ALL}")
                 print(cached_result['answer'])
-                return
+                return True
 
         # Check regular cache
         if self.use_cache and not no_cache:
@@ -159,83 +195,111 @@ Type /help for available commands
             if cached_result:
                 print(f"{Fore.YELLOW}[Using cached result]{Style.RESET_ALL}")
                 print(cached_result['answer'])
-                return
+                return True
 
-        print(f"{Fore.YELLOW}Processing query...{Style.RESET_ALL}")
+        return False
 
-        try:
-            start_time = datetime.now()
+    def _process_query(self, question: str, no_routing: bool) -> Dict[str, Any]:
+        """Process the query and return results."""
+        start_time = datetime.now()
 
-            # Route using embeddings if enabled
-            if self.use_routing and not no_routing and getattr(self, 'use_embedding_routing', False):
-                if hasattr(self, 'embedding_router'):
-                    routed_modules = self.embedding_router.route_query(question)
-                    # Filter to only include modules that actually exist
-                    selected_modules = [m[0] for m in routed_modules if m[0] in self.module_agents]
-                    if not selected_modules:
-                        # Fall back to all available modules if routing fails
-                        selected_modules = list(self.module_agents.keys())
-                    print(f"{Fore.CYAN}Embedding routing to: {selected_modules}{Style.RESET_ALL}")
-                else:
-                    # Fall back to keyword routing
-                    selected_modules = self.routing_agent.route_query(question)
-                    print(f"{Fore.CYAN}Keyword routing to: {selected_modules}{Style.RESET_ALL}")
-            elif self.use_routing and not no_routing and self.routing_agent:
+        # Route to modules
+        selected_modules = self._route_query(question, no_routing)
+
+        # Query selected modules
+        responses, total_cost = self._query_modules(selected_modules, question)
+
+        # Synthesize responses
+        final_answer, synthesis_cost = self._synthesize_responses(question, responses)
+        total_cost += synthesis_cost
+
+        # Calculate time
+        elapsed_time = (datetime.now() - start_time).total_seconds()
+
+        # Cache results
+        self._cache_query_result(question, final_answer, total_cost, elapsed_time)
+
+        # Log query
+        self.query_logger.log_query(question, final_answer, total_cost, elapsed_time)
+
+        return {
+            'answer': final_answer,
+            'cost': total_cost,
+            'time': elapsed_time
+        }
+
+    def _route_query(self, question: str, no_routing: bool) -> List[str]:
+        """Route query to appropriate modules."""
+        if self.use_routing and not no_routing and self.use_embedding_routing:
+            if self.embedding_router is not None:
+                routed_modules = self.embedding_router.route_query(question)
+                # Filter to only include modules that actually exist
+                selected_modules = [m[0] for m in routed_modules
+                                  if m[0] in self.module_agents]
+                if not selected_modules:
+                    # Fall back to all available modules if routing fails
+                    selected_modules = list(self.module_agents.keys())
+                print(f"{Fore.CYAN}Embedding routing to: {selected_modules}{Style.RESET_ALL}")
+            else:
+                # Fall back to keyword routing
                 selected_modules = self.routing_agent.route_query(question)
-                print(f"{Fore.CYAN}Routing to modules: {selected_modules}{Style.RESET_ALL}")
-            else:
-                selected_modules = list(self.module_agents.keys())
+                print(f"{Fore.CYAN}Keyword routing to: {selected_modules}{Style.RESET_ALL}")
+        elif self.use_routing and not no_routing and self.routing_agent:
+            selected_modules = self.routing_agent.route_query(question)
+            print(f"{Fore.CYAN}Routing to modules: {selected_modules}{Style.RESET_ALL}")
+        else:
+            selected_modules = list(self.module_agents.keys())
 
-            # Query selected modules
-            responses = {}
-            total_cost = 0.0
+        return selected_modules
 
-            for module_name in selected_modules:
-                if module_name in self.module_agents:
-                    response = self.module_agents[module_name].query(question)
-                    responses[module_name] = response
-                    total_cost += response.get('cost', 0)
+    def _query_modules(self, selected_modules: List[str], question: str) -> tuple:
+        """Query selected modules and return responses and total cost."""
+        responses = {}
+        total_cost = 0.0
 
-            # Synthesize if multiple responses
-            if len(responses) > 1 and self.synthesis_agent:
-                synthesis_result = self.synthesis_agent.synthesize(question, responses)
-                final_answer = synthesis_result['synthesis']
-                total_cost += synthesis_result.get('cost', 0)
-            else:
-                # Single response
-                final_answer = next(iter(responses.values()))['answer']
+        for module_name in selected_modules:
+            if module_name in self.module_agents:
+                response = self.module_agents[module_name].query(question)
+                responses[module_name] = response
+                total_cost += response.get('cost', 0)
 
-            # Calculate time
-            elapsed_time = (datetime.now() - start_time).total_seconds()
+        return responses, total_cost
 
-            # Cache in semantic cache
-            if self.use_cache and hasattr(self, 'semantic_cache'):
-                self.semantic_cache.set(question, {
-                    'answer': final_answer,
-                    'cost': total_cost,
-                    'time': elapsed_time
-                })
+    def _synthesize_responses(self, question: str, responses: Dict[str, Any]) -> tuple:
+        """Synthesize multiple responses into a single answer."""
+        if len(responses) > 1 and self.synthesis_agent:
+            synthesis_result = self.synthesis_agent.synthesize(question, responses)
+            final_answer = synthesis_result['synthesis']
+            synthesis_cost = synthesis_result.get('cost', 0)
+        else:
+            # Single response
+            final_answer = next(iter(responses.values()))['answer']
+            synthesis_cost = 0
 
-            # Cache in regular cache
-            if self.use_cache:
-                self.cache.set(question, {
-                    'answer': final_answer,
-                    'cost': total_cost,
-                    'time': elapsed_time
-                })
+        return final_answer, synthesis_cost
 
-            # Log query
-            self.query_logger.log_query(question, final_answer, total_cost, elapsed_time)
+    def _cache_query_result(self, question: str, answer: str, cost: float, time: float):
+        """Cache query results in both semantic and regular caches."""
+        result_data = {
+            'answer': answer,
+            'cost': cost,
+            'time': time
+        }
 
-            # Display result
-            print(f"\n{Fore.GREEN}Answer:{Style.RESET_ALL}")
-            print(final_answer)
-            cost_time_msg = f"Cost: ${total_cost:.4f} | Time: {elapsed_time:.2f}s"
-            print(f"\n{Fore.CYAN}{cost_time_msg}{Style.RESET_ALL}")
+        # Cache in semantic cache
+        if self.use_cache and self.semantic_cache is not None:
+            self.semantic_cache.set(question, result_data)
 
-        except (ValueError, AttributeError, RuntimeError) as e:
-            print(f"{Fore.RED}Error processing query: {e}{Style.RESET_ALL}")
-            self.logger.exception("Error in query command")
+        # Cache in regular cache
+        if self.use_cache:
+            self.cache.set(question, result_data)
+
+    def _display_query_result(self, result: Dict[str, Any]):
+        """Display query results to the user."""
+        print(f"\n{Fore.GREEN}Answer:{Style.RESET_ALL}")
+        print(result['answer'])
+        cost_time_msg = f"Cost: ${result['cost']:.4f} | Time: {result['time']:.2f}s"
+        print(f"\n{Fore.CYAN}{cost_time_msg}{Style.RESET_ALL}")
 
     def query(self, question: str) -> Dict[str, Any]:
         """Query method for evaluation framework compatibility."""
@@ -295,7 +359,7 @@ Type /help for available commands
                 'time': elapsed_time
             }
 
-        except Exception as e:
+        except (ValueError, AttributeError, RuntimeError, OSError) as e:
             return {
                 'answer': f'Error processing query: {e}',
                 'cost': 0.0,
@@ -459,7 +523,7 @@ Type /help for available commands
         """Generate or regenerate module summaries. Usage: /summarize [--force]"""
         force = "--force" in arg
 
-        if not hasattr(self, 'summarizer'):
+        if self.summarizer is None:
             self.summarizer = ModuleSummarizer(self.model_config, self.prompt_manager)
 
         print(f"{Fore.YELLOW}Generating module summaries...{Style.RESET_ALL}")
@@ -485,7 +549,7 @@ Type /help for available commands
             print(f"{Fore.RED}Error: Please provide a question to evaluate{Style.RESET_ALL}")
             return
 
-        if not hasattr(self, 'evaluator'):
+        if self.evaluator is None:
             self.evaluator = QueryEvaluator(self.model_config)
 
         print(f"{Fore.YELLOW}Evaluating query strategies...{Style.RESET_ALL}")
@@ -506,15 +570,14 @@ Type /help for available commands
             if strategy in results:
                 metrics = results[strategy]['metrics']
                 print(f"\n{strategy}:")
-                print(f"  Relevance: {metrics.relevance_score:.3f}")
-                print(f"  Completeness: {metrics.completeness_score:.3f}")
-                print(f"  Coherence: {metrics.coherence_score:.3f}")
+                print(f"  Relevance: {metrics.quality.relevance_score:.3f}")
+                print(f"  Completeness: {metrics.quality.completeness_score:.3f}")
+                print(f"  Coherence: {metrics.quality.coherence_score:.3f}")
                 print(f"  Cost: ${results[strategy]['cost']:.4f}")
 
     def do_semantic_cache(self, arg):
         """Manage semantic cache. Usage: /semantic-cache [stats|clear-expired]"""
-        if not hasattr(self, 'semantic_cache'):
-            from semantic_cache import SemanticCache
+        if self.semantic_cache is None and SEMANTIC_CACHE_AVAILABLE:
             self.semantic_cache = SemanticCache()
 
         if arg == "stats":
@@ -533,26 +596,9 @@ Type /help for available commands
     def do_use_embeddings(self, arg):
         """Toggle embedding-based routing. Usage: /use-embeddings [on|off]"""
         if arg.lower() == "on":
-            if not hasattr(self, 'embedding_router'):
-                from embedding_router import EmbeddingRouter
+            if self.embedding_router is None and EMBEDDING_ROUTER_AVAILABLE:
                 self.embedding_router = EmbeddingRouter()
-
-                # Index existing summaries if available
-                if hasattr(self, 'summarizer') and self.summarizer.summaries:
-                    # Filter summaries to only include modules that actually exist in the session
-                    available_modules = set(self.module_agents.keys())
-                    filtered_summaries = {
-                        name: summary for name, summary in self.summarizer.summaries.items()
-                        if name in available_modules
-                    }
-
-                    if filtered_summaries:
-                        self.embedding_router.index_modules(filtered_summaries)
-                        print(f"{Fore.GREEN}Embedding-based routing enabled for {len(filtered_summaries)} modules{Style.RESET_ALL}")
-                    else:
-                        print(f"{Fore.YELLOW}No summaries available for loaded modules. Run /summarize first.{Style.RESET_ALL}")
-                else:
-                    print(f"{Fore.YELLOW}Run /summarize first to generate module summaries{Style.RESET_ALL}")
+                self._setup_embedding_routing()
 
             self.use_embedding_routing = True
 
@@ -561,9 +607,31 @@ Type /help for available commands
             print(f"{Fore.GREEN}Switched back to keyword-based routing{Style.RESET_ALL}")
 
         else:
-            status = "on" if getattr(self, 'use_embedding_routing', False) else "off"
+            status = "on" if self.use_embedding_routing else "off"
             print(f"Embedding routing is currently: {status}")
             print("Usage: /use-embeddings [on|off]")
+
+    def _setup_embedding_routing(self):
+        """Setup embedding routing with existing summaries."""
+        if (self.summarizer is not None and
+            self.summarizer.summaries):
+            # Filter summaries to only include modules that actually exist
+            available_modules = set(self.module_agents.keys())
+            filtered_summaries = {
+                name: summary for name, summary in self.summarizer.summaries.items()
+                if name in available_modules
+            }
+
+            if filtered_summaries:
+                self.embedding_router.index_modules(filtered_summaries)
+                print(f"{Fore.GREEN}Embedding-based routing enabled for "
+                      f"{len(filtered_summaries)} modules{Style.RESET_ALL}")
+            else:
+                print(f"{Fore.YELLOW}No summaries available for loaded modules. "
+                      f"Run /summarize first.{Style.RESET_ALL}")
+        else:
+            print(f"{Fore.YELLOW}Run /summarize first to generate module summaries"
+                  f"{Style.RESET_ALL}")
 
     def do_load_session(self, arg):
         """Load session state. Usage: /load-session <filename>"""

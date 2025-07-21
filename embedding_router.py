@@ -1,10 +1,17 @@
-import numpy as np
-from typing import Dict, List, Optional, Tuple, Any
-import logging
-from pathlib import Path
-import pickle
+"""Semantic embedding-based query routing for educational modules.
 
-from model_config import ModelConfig
+This module provides an EmbeddingRouter class that uses sentence transformers
+to route queries to the most relevant educational modules based on semantic
+similarity rather than keyword matching.
+"""
+
+import logging
+import pickle
+from typing import Dict, List, Tuple, Any
+
+import numpy as np
+from sentence_transformers import SentenceTransformer
+
 from summarizer import ModuleSummary
 
 class EmbeddingRouter:
@@ -19,12 +26,14 @@ class EmbeddingRouter:
         self.logger = logging.getLogger(__name__)
 
         # Initialize embedding model
-        self.logger.info(f"Loading embedding model: {model_name}")
+        self.logger.info("Loading embedding model: %s", model_name)
         try:
-            from sentence_transformers import SentenceTransformer
             self.embed_model = SentenceTransformer(model_name)
         except ImportError:
-            self.logger.error("sentence-transformers not installed. Please install with: pip install sentence-transformers")
+            self.logger.error(
+                "sentence-transformers not installed. "
+                "Please install with: pip install sentence-transformers"
+            )
             raise
 
         # Storage for module embeddings
@@ -43,7 +52,7 @@ class EmbeddingRouter:
             embedding = self.embed_model.encode(text)
             self.module_embeddings[module_name] = embedding
 
-        self.logger.info(f"Indexed {len(self.module_embeddings)} modules")
+        self.logger.info("Indexed %d modules", len(self.module_embeddings))
 
     def route_query(self, query: str) -> List[Tuple[str, float]]:
         """Route query to most relevant modules using embeddings."""
@@ -72,8 +81,9 @@ class EmbeddingRouter:
                    if score >= self.min_similarity][:self.top_k]
 
         if selected:
-            self.logger.info(f"Routed to modules: {[m[0] for m in selected]}")
-            self.logger.info(f"Similarities: {[f'{m[1]:.3f}' for m in selected]}")
+            self.logger.info("Routed to modules: %s", [m[0] for m in selected])
+            self.logger.info("Similarities: %s",
+                           [f'{m[1]:.3f}' for m in selected])
 
         return selected
 
@@ -129,4 +139,7 @@ class EmbeddingRouter:
 
             # Verify model compatibility
             if data['model_name'] != self.model_name:
-                self.logger.warning(f"Index created with different model: {data['model_name']}")
+                self.logger.warning(
+                    "Index created with different model: %s",
+                    data['model_name']
+                )

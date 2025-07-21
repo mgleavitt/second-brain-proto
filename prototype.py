@@ -441,7 +441,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
 
         return result
 
-    def _route_query(self, question: str) -> List[str]:
+    def _route_query(self, question: str) -> List[str]:  # pylint: disable=too-many-locals
         """Determine which modules are relevant to the query using content analysis."""
         question_lower = question.lower()
         question_words = set(question_lower.split())

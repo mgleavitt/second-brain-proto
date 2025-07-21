@@ -6,37 +6,20 @@ using LLMs.
 
 from typing import List, Dict, Any, Optional
 import hashlib
-import time
-from langchain.schema import HumanMessage
-from langchain_anthropic import ChatAnthropic
-from langchain_google_genai import ChatGoogleGenerativeAI
 from prompt_manager import PromptManager
 from model_config import ModelConfig
+from .base_agent import BaseAgent
 
 
-class ModuleAgent:  # pylint: disable=too-many-instance-attributes
+class ModuleAgent(BaseAgent):  # pylint: disable=too-many-instance-attributes
     """Agent specialized for handling course module content."""
 
     def __init__(self, documents: List[Dict],
                  model_config: Optional[ModelConfig] = None,
                  prompt_manager: Optional[PromptManager] = None):
         """Initialize the ModuleAgent with documents, model config, and prompt manager."""
+        super().__init__(model_config, prompt_manager, "module")
         self.documents = documents
-        self.model_config = model_config or ModelConfig()
-        self.prompt_manager = prompt_manager or PromptManager()
-
-        # Get model name from config
-        self.model_name = self.model_config.get_model_name("module")
-
-        # Initialize LLM based on provider
-        model_info = self.model_config.get_model_info("module")
-        if model_info.provider == "google":
-            self.llm = ChatGoogleGenerativeAI(model=self.model_name)
-        else:
-            self.llm = ChatAnthropic(model=self.model_name)
-
-        self.total_cost = 0.0
-        self.total_tokens = 0
 
         # Chunk all loaded documents
         self.chunks = self._load_and_chunk_documents()
@@ -121,53 +104,6 @@ class ModuleAgent:  # pylint: disable=too-many-instance-attributes
             context = context[:8000] + "\n\n[Context truncated for length...]"
 
         system_prompt = self.prompt_manager.get_prompt("module")
-        prompt = f"""{system_prompt}
+        prompt = self._create_standard_prompt(system_prompt, context, question)
 
-Relevant excerpts from the module:
----
-{context}
----
-
-Question: {question}
-
-Please provide a comprehensive answer based on the information in these excerpts. Focus on:
-1. Direct answers to the question
-2. Related concepts mentioned
-3. Specific examples or details
-4. Any limitations or caveats mentioned
-
-Provide a clear, concise response based solely on the information provided."""
-
-        try:
-            start_time = time.time()
-            response = self.llm.invoke([HumanMessage(content=prompt)])
-            duration = time.time() - start_time
-            response_text = response.content if hasattr(response, 'content') else str(response)
-            tokens_used = self._estimate_tokens(prompt, response_text)
-            cost = self._calculate_cost(tokens_used)
-            self.total_cost += cost
-            self.total_tokens += tokens_used
-            return {
-                "answer": response_text,
-                "tokens_used": tokens_used,
-                "cost": cost,
-                "duration": duration
-            }
-        except (ValueError, AttributeError, RuntimeError) as e:
-            print(f"Error querying module: {e}")
-            return {
-                "answer": f"Error: {str(e)}",
-                "tokens_used": 0,
-                "cost": 0.0,
-                "duration": 0.0
-            }
-
-    def _estimate_tokens(self, prompt: str, response: str) -> int:
-        """Estimate the number of tokens used for prompt and response."""
-        prompt_tokens = len(prompt) // 4
-        response_tokens = len(response) // 4
-        return prompt_tokens + response_tokens
-
-    def _calculate_cost(self, tokens: int) -> float:
-        """Calculate the estimated cost for the number of tokens used."""
-        return self.model_config.estimate_cost("module", int(tokens * 0.7), int(tokens * 0.3))
+        return self._invoke_llm_with_tracking(prompt)

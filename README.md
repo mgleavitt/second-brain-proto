@@ -12,6 +12,9 @@ This prototype validates the concept of a "Second Brain" system that can:
 - Provide comprehensive answers with source attribution
 - Track costs and performance metrics
 - Cache results for efficiency
+- Use intelligent routing to optimize costs
+- Generate module summaries for improved accuracy
+- Implement semantic caching for similar queries
 
 ## Architecture
 
@@ -22,6 +25,12 @@ The system consists of several key components:
 - Each document has its own specialized agent
 - Agents use LLMs to extract relevant information from their assigned document
 - Default model: `gemini-1.5-flash` (cost-effective for document processing)
+
+### Module Agents
+
+- Handle collections of related documents (e.g., course modules)
+- Provide module-level querying and summarization
+- Enable efficient processing of large document corpora
 
 ### Synthesis Agent
 
@@ -34,6 +43,7 @@ The system consists of several key components:
 - Intelligently routes queries to relevant modules
 - Uses keyword matching and semantic embeddings
 - Reduces costs by querying only relevant documents
+- Implements query complexity detection for optimal routing
 
 ### Cache System
 
@@ -78,7 +88,8 @@ The system consists of several key components:
 
 ## Reviewing Logs
 
-The system logs all queries to `logs/queries.jsonl` in JSON Lines format. You can review these logs using various command-line tools:
+The system logs all queries to `logs/queries.jsonl` in JSON Lines format.
+You can review these logs using various command-line tools:
 
 ### Using `jq` (Recommended)
 
@@ -92,7 +103,8 @@ cat logs/queries.jsonl | jq '.'
 cat logs/queries.jsonl | jq '.question'
 
 # View questions with timestamps
-cat logs/queries.jsonl | jq '{question: .question, timestamp: .timestamp}'
+cat logs/queries.jsonl | \
+  jq '{question: .question, timestamp: .timestamp}'
 
 # Count total entries
 cat logs/queries.jsonl | jq -s 'length'
@@ -107,7 +119,8 @@ cat logs/queries.jsonl | jq 'select(.question | contains("optimization"))'
 cat logs/queries.jsonl | jq '{question: .question, duration: .result.duration}'
 
 # Export to CSV format
-cat logs/queries.jsonl | jq -r '. | [.question, .result.total_cost, .result.duration, .timestamp] | @csv'
+cat logs/queries.jsonl | \
+  jq -r '. | [.question, .result.total_cost, .result.duration, .timestamp] | @csv'
 ```
 
 ### Alternative Methods
@@ -125,7 +138,9 @@ grep -o '"timestamp": "[^"]*"' logs/queries.jsonl
 wc -l logs/queries.jsonl
 
 # Python one-liner for basic analysis
-python3 -c "import json; data=[json.loads(line) for line in open('logs/queries.jsonl')]; print(f'Total queries: {len(data)}'); print(f'Total cost: ${sum(q[\"result\"][\"total_cost\"] for q in data):.4f}')"
+python3 -c "import json; data=[json.loads(line) for line in open('logs/queries.jsonl')]; \
+  print(f'Total queries: {len(data)}'); \
+  print(f'Total cost: ${sum(q[\"result\"][\"total_cost\"] for q in data):.4f}')"
 ```
 
 ## Setup
@@ -158,11 +173,7 @@ GOOGLE_API_KEY=your_google_api_key_here
 
 ### 3. Test Documents
 
-The prototype includes three test documents:
-
-- `documents/cs229_optimization.txt` - Gradient descent and optimization techniques
-- `documents/cs221_search.txt` - A* search and heuristic functions
-- `documents/paper_transformers.txt` - Attention mechanisms and transformers
+The prototype includes test documents in the `documents/` directory and extensive course materials in the `classes/` directory.
 
 ## Usage
 
@@ -419,10 +430,21 @@ second-brain-proto/
 ├── .env                    # API keys (create from .env.example)
 ├── .env.example           # Template for environment variables
 ├── prototype.py           # Main prototype script
+├── interactive_session.py # Interactive CLI interface
 ├── prompt_manager.py      # System prompt management
+├── model_config.py        # Model configuration and cost tracking
+├── cache_manager.py       # Caching system
+├── query_logger.py        # Query logging functionality
+├── summarizer.py          # Module summarization
+├── semantic_cache.py      # Semantic caching system
+├── embedding_router.py    # Embedding-based routing
+├── evaluation_framework.py # Query evaluation framework
 ├── test_prompts.py        # Prompt functionality tests
+├── test_advanced_features.py # Advanced features tests
+├── debug_commands.py      # Debugging utilities
 ├── agents/                # Agent implementations
 │   ├── __init__.py
+│   ├── base_agent.py      # Base agent class
 │   ├── document_agent.py  # Individual document agents
 │   ├── module_agent.py    # Module-based agents
 │   └── routing_agent.py   # Intelligent query routing
@@ -436,11 +458,12 @@ second-brain-proto/
 │   ├── module_agent.md
 │   └── synthesis_agent.md
 ├── documents/            # Test documents directory
-│   ├── cs229_optimization.txt
-│   ├── cs221_search.txt
-│   └── paper_transformers.txt
+├── classes/              # Course materials directory
 ├── logs/                 # Query logs directory
 │   └── queries.jsonl     # JSON lines format log file
+├── .cache/               # Cache directory
+├── .semantic_cache/      # Semantic cache directory
+├── .evaluation/          # Evaluation results directory
 └── README.md            # This file
 ```
 
@@ -491,6 +514,10 @@ The prototype demonstrates:
 - ✅ Response times under 10 seconds
 - ✅ Cache functionality
 - ✅ Comprehensive logging
+- ✅ Intelligent routing
+- ✅ Module summarization
+- ✅ Semantic caching
+- ✅ Query evaluation
 
 ## Future Enhancements
 
@@ -501,16 +528,16 @@ Potential improvements for future versions:
    - Module-based document organization
    - Comprehensive cost tracking
    - Scale testing capabilities
+   - Advanced optimization features
 
 2. **Next Steps**
-   - Semantic similarity checking for cache
-   - Parallel document agent queries
    - Web interface using Gradio
    - Export results to markdown reports
    - Support for more document formats (PDF, DOCX)
    - Advanced caching strategies with TTL
    - Query performance optimization
    - Real-time document updates
+   - Knowledge graph construction
 
 ## Troubleshooting
 
@@ -528,6 +555,10 @@ Potential improvements for future versions:
    - Verify model names are correct
    - Check API provider status
 
+4. **Embedding Model Issues**
+   - First run may take time to download embedding models
+   - Ensure sufficient disk space for model caching
+
 ### Debug Mode
 
 Enable debug logging by modifying the script to add more verbose output.
@@ -544,3 +575,14 @@ This is a prototype for validation purposes. For production use, consider:
 ## License
 
 This project is for educational and research purposes.
+
+## Further Technical Documentation
+
+For advanced users and contributors, the following markdown files provide in-depth technical details, architectural diagrams, and the history of major optimizations:
+
+- **ADVANCED_FEATURES_IMPLEMENTATION.md**: Detailed implementation notes and usage for advanced features such as module summaries, semantic caching, embedding-based routing, and the evaluation framework.
+- **CODE_STRUCTURE_DIAGRAM.md**: A comprehensive diagram and breakdown of the system's architecture, including all major modules and data flow.
+- **IMPROVEMENTS_SUMMARY.md**: Summary of improvements made for handling large corpora, including routing, chunking, and scalability enhancements.
+- **ROUTING_FIX_SUMMARY.md**: Technical summary of the routing algorithm improvements, including configuration, complexity detection, and cost reduction results.
+
+Consult these files for deeper insight into the system's design, optimization strategies, and implementation rationale.
