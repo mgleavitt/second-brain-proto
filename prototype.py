@@ -643,7 +643,7 @@ def run_test_queries(prototype: SecondBrainPrototype):
 
     for i, query in enumerate(test_queries, 1):
         print(f"{Fore.YELLOW}Test Query {i}/{len(test_queries)}{Style.RESET_ALL}")
-        result = prototype.query(query)
+        result = prototype.query_with_routing(query)
         display_query_response(query, result)
 
 
@@ -861,11 +861,8 @@ def _handle_query_command(prototype: SecondBrainPrototype, args):
         print(f"{Fore.RED}Error: Please provide a question with --question{Style.RESET_ALL}")
         sys.exit(1)
 
-    # Use routing if specified
-    if args.use_routing:
-        result = prototype.query_with_routing(args.question, use_cache=not args.no_cache)
-    else:
-        result = prototype.query(args.question, use_cache=not args.no_cache)
+    # Use intelligent routing for better performance and cost optimization
+    result = prototype.query_with_routing(args.question, use_cache=not args.no_cache)
 
     display_query_response(args.question, result)
 

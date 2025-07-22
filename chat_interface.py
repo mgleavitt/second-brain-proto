@@ -5,7 +5,7 @@ context building, and integration with the existing SecondBrainPrototype.
 """
 
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from colorama import Fore, Style
 
@@ -235,21 +235,32 @@ class ChatInterface:
             # Add user message to conversation
             user_message = self.conversation_manager.add_message("user", user_input)
 
-            # Build context-aware query
-            enriched_query = self._build_context_prompt(user_input)
+            # Check if this is a follow-up question that can use cached results
+            is_followup, cached_result = self._check_followup_question(user_input)
 
-            # Route through existing pipeline
-            start_time = datetime.now()
-            # Use conversation ID as namespace for cache isolation
-            namespace = f"conv_{self.conversation_manager.conversation_id}"
-            result = self.prototype.query(enriched_query, use_cache=True, namespace=namespace)
-            end_time = datetime.now()
+            if is_followup and cached_result:
+                # Use cached result for follow-up questions
+                print(f"{Fore.CYAN}Using cached results for follow-up question{Style.RESET_ALL}")
+                result = cached_result
+            else:
+                # Build context-aware query
+                enriched_query = self._build_context_prompt(user_input)
+
+                # Route through existing pipeline
+                start_time = datetime.now()
+                # Use conversation ID as namespace for cache isolation
+                namespace = f"conv_{self.conversation_manager.conversation_id}"
+                result = self.prototype.query_with_routing(enriched_query, use_cache=True, namespace=namespace)
+                end_time = datetime.now()
+
+                # Store result for potential follow-up questions
+                self._cache_last_result(result, namespace)
 
             # Extract response and metadata
             response = result.get("response", "No response generated")
             cost = result.get("total_cost", 0.0)
             tokens = result.get("total_tokens", 0)
-            time_taken = (end_time - start_time).total_seconds()
+            time_taken = result.get("duration", 0.0)  # Use duration from result if available
 
             # Add assistant response to conversation
             metadata = {
@@ -258,7 +269,8 @@ class ChatInterface:
                 "time_seconds": time_taken,
                 "routing_decision": result.get("routing_decision", "unknown"),
                 "modules_used": result.get("modules_used", []),
-                "model": result.get("model_used", "unknown")
+                "model": result.get("model_used", "unknown"),
+                "used_cache": is_followup and cached_result is not None
             }
 
             assistant_message = self.conversation_manager.add_message(
@@ -271,6 +283,89 @@ class ChatInterface:
         except Exception as e:
             self.logger.error("Error processing message: %s", e)
             print(f"{Fore.RED}Error processing message: {e}{Style.RESET_ALL}")
+
+    def _check_followup_question(self, user_input: str) -> Tuple[bool, Optional[Dict]]:
+        """Check if this is a follow-up question that can use cached results."""
+        if not hasattr(self, '_last_result_cache'):
+            return False, None
+
+        # Follow-up indicators for expansion/clarification
+        expansion_indicators = [
+            "can you explain", "what do you mean", "tell me more", "expand on",
+            "elaborate", "give me more details", "can you clarify", "what about",
+            "give an example", "show me", "describe", "define", "what is",
+            "how does", "why does", "when would", "where is", "which one"
+        ]
+
+        # Follow-up indicators for referencing previous content
+        reference_indicators = [
+            "the first", "the second", "the third", "this", "that", "it",
+            "they", "them", "these", "those", "above", "below", "mentioned",
+            "said", "discussed", "talked about", "covered"
+        ]
+
+        input_lower = user_input.lower()
+
+        # Check if input contains follow-up indicators
+        is_expansion = any(indicator in input_lower for indicator in expansion_indicators)
+        is_reference = any(indicator in input_lower for indicator in reference_indicators)
+
+        # Also check if it's a very short question (likely a follow-up)
+        is_short = len(user_input.split()) <= 5
+
+        # Check if it's asking about the same topic as the last response
+        is_same_topic = self._is_same_topic(user_input)
+
+        if is_expansion or is_reference or is_short or is_same_topic:
+            return True, self._last_result_cache
+
+        return False, None
+
+    def _is_same_topic(self, user_input: str) -> bool:
+        """Check if the user input is asking about the same topic as the last response."""
+        if not hasattr(self, '_last_result_cache') or not self._last_result_cache:
+            return False
+
+        # Get the last assistant response
+        if not self.conversation_manager:
+            return False
+
+        messages = self.conversation_manager.conversation.messages
+        if len(messages) < 2:
+            return False
+
+        # Get the last assistant message
+        last_assistant_msg = None
+        for msg in reversed(messages):
+            if msg.role == "assistant":
+                last_assistant_msg = msg
+                break
+
+        if not last_assistant_msg:
+            return False
+
+        # Extract key terms from the last response and current input
+        last_response_lower = last_assistant_msg.content.lower()
+        current_input_lower = user_input.lower()
+
+        # Simple keyword matching - if they share key terms, likely same topic
+        last_words = set(last_response_lower.split())
+        current_words = set(current_input_lower.split())
+
+        # Filter out common words
+        common_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "is", "are", "was", "were", "be", "been", "have", "has", "had", "do", "does", "did", "will", "would", "could", "should", "can", "may", "might", "this", "that", "these", "those", "it", "its", "they", "them", "their"}
+
+        last_keywords = last_words - common_words
+        current_keywords = current_words - common_words
+
+        # If they share significant keywords, likely same topic
+        shared_keywords = last_keywords & current_keywords
+        return len(shared_keywords) >= 2  # At least 2 shared keywords
+
+    def _cache_last_result(self, result: Dict, namespace: str) -> None:
+        """Cache the last result for potential follow-up questions."""
+        self._last_result_cache = result
+        self._last_result_namespace = namespace
 
     def _build_context_prompt(self, current_query: str) -> str:
         """Build context-aware prompt from conversation history."""
