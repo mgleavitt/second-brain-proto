@@ -1,0 +1,27 @@
+{
+  "conversation_id": "chat_20250721_191145",
+  "created_at": "2025-07-21T19:11:45.878935",
+  "last_updated": "2025-07-21T19:12:22.522767",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is Python?",
+      "timestamp": "2025-07-21T19:12:22.521224",
+      "metadata": {}
+    },
+    {
+      "role": "assistant",
+      "content": "Python is a programming language.",
+      "timestamp": "2025-07-21T19:12:22.522226",
+      "metadata": {}
+    },
+    {
+      "role": "user",
+      "content": "Tell me more about it.",
+      "timestamp": "2025-07-21T19:12:22.522767",
+      "metadata": {}
+    }
+  ],
+  "total_cost": 0.0,
+  "total_tokens": 0
+}

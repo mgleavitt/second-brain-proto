@@ -1,0 +1,30 @@
+{
+  "conversation_id": "chat_20250721_191237",
+  "created_at": "2025-07-21T19:12:37.620574",
+  "last_updated": "2025-07-21T19:12:37.622665",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello",
+      "timestamp": "2025-07-21T19:12:37.621513",
+      "metadata": {}
+    },
+    {
+      "role": "assistant",
+      "content": "Test response",
+      "timestamp": "2025-07-21T19:12:37.622665",
+      "metadata": {
+        "tokens": 10,
+        "cost": 0.001,
+        "time_seconds": 5.7e-05,
+        "routing_decision": "synthesis",
+        "modules_used": [
+          "module1"
+        ],
+        "model": "claude-3-sonnet"
+      }
+    }
+  ],
+  "total_cost": 0.001,
+  "total_tokens": 10
+}

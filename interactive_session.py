@@ -74,6 +74,9 @@ Type /help for available commands
         self.embedding_router: Optional[Any] = None
         self.use_embedding_routing = False
 
+        # Chat interface
+        self.chat_interface: Optional[Any] = None
+
         # Configure logging
         logging.basicConfig(level=logging.INFO,
                           format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -108,6 +111,8 @@ Type /help for available commands
                 ("/evaluate <question>", "Evaluate query strategies"),
                 ("/semantic-cache [stats|clear-expired]", "Manage semantic cache"),
                 ("/use-embeddings [on|off]", "Toggle embedding-based routing"),
+                ("/chat [new|load <id>|list|exit]", "Start chat mode or manage conversations"),
+                ("/conversations", "List saved conversations"),
                 ("/exit", "Exit interactive mode")
             ]
 
@@ -777,6 +782,151 @@ Type /help for available commands
             else:
                 self.synthesis_agent.llm = ChatAnthropic(model=self.synthesis_agent.model_name)
 
+    def do_chat(self, arg):
+        """Start chat mode or manage conversations. Usage: /chat [new|load <id>|list|exit]"""
+        parts = arg.split()
+        if not parts:
+            # Start new chat
+            self._start_chat_mode()
+            return
+
+        command = parts[0].lower()
+
+        if command == "new":
+            self._start_chat_mode()
+        elif command == "load":
+            if len(parts) < 2:
+                print(f"{Fore.RED}Error: Please provide conversation ID to load{Style.RESET_ALL}")
+                return
+            conversation_id = parts[1]
+            self._start_chat_mode(conversation_id)
+        elif command == "list":
+            self._list_conversations()
+        elif command == "exit":
+            if self.chat_interface and self.chat_interface.is_active():
+                self.chat_interface._exit_chat()
+            else:
+                print(f"{Fore.YELLOW}No active chat session{Style.RESET_ALL}")
+        else:
+            print(f"{Fore.RED}Unknown chat command: {command}{Style.RESET_ALL}")
+            print(f"Usage: /chat [new|load <id>|list|exit]")
+
+    def do_conversations(self, arg):
+        """List saved conversations. Usage: /conversations [--detailed]"""
+        self._list_conversations(detailed="--detailed" in arg.split())
+
+    def _start_chat_mode(self, conversation_id: Optional[str] = None):
+        """Start chat mode with optional conversation ID."""
+        try:
+            # Create prototype instance for chat interface
+            from prototype import SecondBrainPrototype
+            prototype = SecondBrainPrototype()
+
+            # Load existing documents into prototype
+            for path in self.loaded_paths:
+                prototype.load_from_paths([path], recursive=False)
+
+            # Create and start chat interface
+            from chat_interface import ChatInterface
+            self.chat_interface = ChatInterface(
+                prototype=prototype,
+                max_context_tokens=8000,
+                context_strategy="recent",
+                show_cost_per_message=True,
+                show_token_usage=False
+            )
+
+            self.chat_interface.start_chat(conversation_id)
+
+        except Exception as e:
+            self.logger.error("Failed to start chat mode: %s", e)
+            print(f"{Fore.RED}Error starting chat mode: {e}{Style.RESET_ALL}")
+
+    def _list_conversations(self, detailed: bool = False):
+        """List saved conversations."""
+        try:
+            from pathlib import Path
+            import json
+            from datetime import datetime
+
+            conversations_dir = Path(".conversations")
+            if not conversations_dir.exists():
+                print(f"{Fore.YELLOW}No conversations directory found{Style.RESET_ALL}")
+                return
+
+            conversation_files = list(conversations_dir.glob("*.json"))
+            if not conversation_files:
+                print(f"{Fore.YELLOW}No saved conversations found{Style.RESET_ALL}")
+                return
+
+            print(f"\n{Fore.CYAN}Saved Conversations:{Style.RESET_ALL}")
+
+            conversations = []
+            for file_path in conversation_files:
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+
+                    conversation_id = data.get("conversation_id", file_path.stem)
+                    created_at = data.get("created_at", "")
+                    last_updated = data.get("last_updated", "")
+                    total_messages = len(data.get("messages", []))
+                    total_cost = data.get("total_cost", 0.0)
+
+                    # Parse timestamps
+                    try:
+                        created_dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                        updated_dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                        created_str = created_dt.strftime("%Y-%m-%d %H:%M")
+                        updated_str = updated_dt.strftime("%Y-%m-%d %H:%M")
+                    except (ValueError, AttributeError):
+                        created_str = created_at[:19] if created_at else "Unknown"
+                        updated_str = last_updated[:19] if last_updated else "Unknown"
+
+                    conversations.append({
+                        'id': conversation_id,
+                        'created': created_str,
+                        'updated': updated_str,
+                        'messages': total_messages,
+                        'cost': total_cost
+                    })
+
+                except (json.JSONDecodeError, OSError) as e:
+                    self.logger.warning("Failed to read conversation file %s: %s", file_path, e)
+                    continue
+
+            # Sort by last updated (most recent first)
+            conversations.sort(key=lambda x: x['updated'], reverse=True)
+
+            if detailed:
+                # Detailed view with table
+                headers = ["ID", "Created", "Updated", "Messages", "Cost"]
+                table_data = []
+                for conv in conversations:
+                    table_data.append([
+                        conv['id'],
+                        conv['created'],
+                        conv['updated'],
+                        str(conv['messages']),
+                        f"${conv['cost']:.4f}"
+                    ])
+
+                from tabulate import tabulate
+                print(tabulate(table_data, headers=headers, tablefmt="grid"))
+            else:
+                # Simple list
+                for conv in conversations:
+                    print(f"  {Fore.GREEN}{conv['id']:<20}{Style.RESET_ALL} "
+                          f"{conv['messages']:>3} messages, "
+                          f"${conv['cost']:.4f}, "
+                          f"updated {conv['updated']}")
+
+            print()
+
+        except Exception as e:
+            self.logger.error("Failed to list conversations: %s", e)
+            print(f"{Fore.RED}Error listing conversations: {e}{Style.RESET_ALL}")
+
     # Override cmd methods for better UX
     def default(self, line):
         """Handle commands that don't start with /"""
@@ -786,8 +936,9 @@ Type /help for available commands
             if hasattr(self, f'do_{cmd_name}'):
                 func = getattr(self, f'do_{cmd_name}')
                 if callable(func):
-                    func(remainder)
-                    return
+                    result = func(remainder)
+                    # Return the result so cmdloop() can handle exit commands
+                    return result
             print(f"{Fore.RED}Unknown command: {line.split()[0]}{Style.RESET_ALL}")
         else:
             # Treat as a query if no / prefix

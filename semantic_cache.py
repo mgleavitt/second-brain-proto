@@ -94,18 +94,22 @@ class SemanticCache:  # pylint: disable=too-many-instance-attributes
         except (pickle.PickleError, OSError) as e:
             self.logger.error("Error saving cache: %s", e)
 
-    def _get_query_hash(self, query: str) -> str:
-        """Generate hash for exact query matching."""
-        return hashlib.sha256(query.encode()).hexdigest()[:16]
+    def _get_query_hash(self, query: str, namespace: Optional[str] = None) -> str:
+        """Generate hash for exact query matching with optional namespace."""
+        if namespace:
+            key_data = f"{namespace}_{query}"
+            return hashlib.sha256(key_data.encode()).hexdigest()[:16]
+        else:
+            return hashlib.sha256(query.encode()).hexdigest()[:16]
 
     def _is_expired(self, timestamp: str) -> bool:
         """Check if cache entry is expired."""
         entry_time = datetime.fromisoformat(timestamp)
         return datetime.now() - entry_time > self.ttl
 
-    def get(self, query: str) -> Optional[Dict[str, Any]]:
-        """Get cached result for semantically similar query."""
-        query_hash = self._get_query_hash(query)
+    def get(self, query: str, namespace: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get cached result for semantically similar query with optional namespace."""
+        query_hash = self._get_query_hash(query, namespace)
 
         # First check exact match
         if query_hash in self.cache_data:
@@ -146,9 +150,9 @@ class SemanticCache:  # pylint: disable=too-many-instance-attributes
 
         return None
 
-    def set(self, query: str, data: Dict[str, Any]):
-        """Cache query result with semantic embedding."""
-        query_hash = self._get_query_hash(query)
+    def set(self, query: str, data: Dict[str, Any], namespace: Optional[str] = None):
+        """Cache query result with semantic embedding with optional namespace."""
+        query_hash = self._get_query_hash(query, namespace)
 
         # Embed query
         query_embedding: np.ndarray = self.embed_model.encode([query])[0]

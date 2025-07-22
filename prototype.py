@@ -49,16 +49,18 @@ class SimpleCache:  # pylint: disable=too-few-public-methods
         self.hits = 0
         self.misses = 0
 
-    def get(self, key: str) -> Optional[Any]:
-        """Get value from cache."""
+    def get(self, key: str, namespace: Optional[str] = None) -> Optional[Any]:
+        """Get value from cache with optional namespace."""
+        # For now, ignore namespace to maintain backward compatibility
         if key in self.cache:
             self.hits += 1
             return self.cache[key]
         self.misses += 1
         return None
 
-    def set(self, key: str, value: Any) -> None:
-        """Set value in cache."""
+    def set(self, key: str, value: Any, namespace: Optional[str] = None) -> None:
+        """Set value in cache with optional namespace."""
+        # For now, ignore namespace to maintain backward compatibility
         self.cache[key] = value
 
     def get_stats(self) -> Dict[str, int]:
@@ -100,12 +102,13 @@ class QueryLogger:  # pylint: disable=too-few-public-methods
 class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
     """Enhanced orchestrator with routing capabilities."""
 
-    def __init__(self, prompt_manager: Optional[PromptManager] = None):
+    def __init__(self, prompt_manager: Optional[PromptManager] = None, model_config: Optional['ModelConfig'] = None):
         self.document_agents = []
         self.module_agents = {}  # New: module-based agents
         self.routing_agent = None  # Will be initialized when modules are added
         self.synthesis_agent = None
         self.prompt_manager = prompt_manager or PromptManager()
+        self.model_config = model_config or ModelConfig()
         self.cache = SimpleCache()
         self.logger = QueryLogger()
 
@@ -126,22 +129,24 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
     def add_document(self, name: str, path: str) -> None:
         """Add a document agent."""
         try:
-            agent = DocumentAgent(name, path, prompt_manager=self.prompt_manager)
+            agent = DocumentAgent([
+                {"name": name, "path": path, "content": Path(path).read_text(encoding="utf-8")}
+            ], model_config=self.model_config, prompt_manager=self.prompt_manager)
             self.document_agents.append(agent)
-            success_msg = f"✓ Added document agent: {name}"
+            success_msg = f"\u2713 Added document agent: {name}"
             print(f"{Fore.GREEN}{success_msg}{Style.RESET_ALL}")
         except (FileNotFoundError, ValueError) as e:
-            error_msg = f"✗ Failed to add document {name}: {e}"
+            error_msg = f"\u2717 Failed to add document {name}: {e}"
             print(f"{Fore.RED}{error_msg}{Style.RESET_ALL}")
 
     def add_module(self, module_name: str, documents: List[Dict]) -> None:
         """Add a module agent for handling multiple related documents."""
         try:
-            agent = ModuleAgent(module_name, documents, prompt_manager=self.prompt_manager)
+            agent = ModuleAgent(documents, model_config=self.model_config, prompt_manager=self.prompt_manager, module_name=module_name)
             self.module_agents[module_name] = agent
             doc_count = len(documents)
             msg = (
-                f"✓ Added module agent: {module_name} "
+                f"\u2713 Added module agent: {module_name} "
                 f"({doc_count} docs)"
             )
             print(
@@ -150,7 +155,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
             )
         except (ValueError, KeyError) as e:
             print(
-                f"{Fore.RED}✗ Failed to add module {module_name}: {e}"
+                f"{Fore.RED}\u2717 Failed to add module {module_name}: {e}"
                 f"{Style.RESET_ALL}"
             )
 
@@ -186,14 +191,20 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
             except (FileNotFoundError, PermissionError) as e:
                 print(f"{Fore.RED}Error loading {path}: {e}{Style.RESET_ALL}")
 
-    def query(self, question: str, use_cache: bool = True) -> Dict[str, Any]:  # pylint: disable=too-many-locals
-        """Query the second brain system."""
+    def query(self, question: str, use_cache: bool = True, namespace: Optional[str] = None) -> Dict[str, Any]:  # pylint: disable=too-many-locals
+        """Query the second brain system.
+
+        Args:
+            question: The query to process
+            use_cache: Whether to use caching
+            namespace: Optional namespace for conversation-specific caching
+        """
         start_time = time.time()
 
         # Check cache first
         cache_key = hashlib.md5(question.encode()).hexdigest()
         if use_cache:
-            cached_result = self.cache.get(cache_key)
+            cached_result = self.cache.get(cache_key, namespace=namespace)
             if cached_result:
                 print(f"{Fore.YELLOW}Cache hit!{Style.RESET_ALL}")
                 return cached_result
@@ -224,7 +235,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         print(f"{Fore.CYAN}Synthesizing responses...{Style.RESET_ALL}")
         if self.synthesis_agent is None:
             self.synthesis_agent = SynthesisAgent(
-                model_config=self.prompt_manager.model_config,
+                model_config=self.model_config,
                 prompt_manager=self.prompt_manager
             )
         synthesis_result = self.synthesis_agent.synthesize(question, agent_responses)
@@ -249,7 +260,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
 
         # Cache the result
         if use_cache:
-            self.cache.set(cache_key, result)
+            self.cache.set(cache_key, result, namespace=namespace)
 
         # Update tracking
         self.total_queries += 1
@@ -308,7 +319,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         if len(agent_responses) > 1:
             if self.synthesis_agent is None:
                 self.synthesis_agent = SynthesisAgent(
-                    model_config=self.prompt_manager.model_config,
+                    model_config=self.model_config,
                     prompt_manager=self.prompt_manager
                 )
             synthesis_result = self.synthesis_agent.synthesize(
@@ -348,14 +359,20 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         result["routing_decision"] = routing_decision
         return result
 
-    def query_with_routing(self, question: str, use_cache: bool = True) -> Dict[str, Any]:  # pylint: disable=too-many-locals
-        """Query with intelligent routing based on content relevance."""
+    def query_with_routing(self, question: str, use_cache: bool = True, namespace: Optional[str] = None) -> Dict[str, Any]:  # pylint: disable=too-many-locals
+        """Query with intelligent routing based on content relevance.
+
+        Args:
+            question: The query to process
+            use_cache: Whether to use caching
+            namespace: Optional namespace for conversation-specific caching
+        """
         start_time = time.time()
 
         # Check cache first
         cache_key = hashlib.md5(question.encode()).hexdigest()
         if use_cache:
-            cached_result = self.cache.get(cache_key)
+            cached_result = self.cache.get(cache_key, namespace=namespace)
             if cached_result:
                 print(f"{Fore.YELLOW}Cache hit!{Style.RESET_ALL}")
                 return cached_result
@@ -398,7 +415,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         print(f"{Fore.CYAN}Synthesizing responses...{Style.RESET_ALL}")
         if self.synthesis_agent is None:
             self.synthesis_agent = SynthesisAgent(
-                model_config=self.prompt_manager.model_config,
+                model_config=self.model_config,
                 prompt_manager=self.prompt_manager
             )
         synthesis_result = self.synthesis_agent.synthesize(question, agent_responses)
@@ -424,7 +441,7 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
 
         # Cache the result
         if use_cache:
-            self.cache.set(cache_key, result)
+            self.cache.set(cache_key, result, namespace=namespace)
 
         # Update tracking
         self.total_queries += 1
@@ -941,7 +958,7 @@ def main():  # pylint: disable=too-many-locals,too-many-branches,too-many-statem
         session.cmdloop()
         return
 
-    prototype = SecondBrainPrototype(prompt_manager=prompt_manager)
+    prototype = SecondBrainPrototype(prompt_manager=prompt_manager, model_config=model_config)
 
     # Load documents
     if args.documents:

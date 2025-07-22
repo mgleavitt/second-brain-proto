@@ -37,24 +37,34 @@ class CourseModuleLoader:  # pylint: disable=too-few-public-methods
         """Load all documents from a module directory."""
         documents = []
         for file_path in sorted(module_dir.glob("*.txt")):
-            doc = {
-                "name": file_path.stem,
-                "path": str(file_path),
-                "type": "transcript",
-                "module": module_dir.name
-            }
-            documents.append(doc)
+            try:
+                content = file_path.read_text(encoding="utf-8")
+                doc = {
+                    "name": file_path.stem,
+                    "path": str(file_path),
+                    "content": content,
+                    "type": "transcript",
+                    "module": module_dir.name
+                }
+                documents.append(doc)
+            except Exception as e:
+                print(f"Warning: Could not load {file_path}: {e}")
         return documents
 
     def _load_papers(self, papers_dir: Path) -> List[Dict]:
         """Load papers from the papers directory."""
         documents = []
         for file_path in sorted(papers_dir.glob("*.txt")):
-            doc = {
-                "name": file_path.stem,
-                "path": str(file_path),
-                "type": "paper",
-                "module": "papers"
-            }
-            documents.append(doc)
+            try:
+                content = file_path.read_text(encoding="utf-8")
+                doc = {
+                    "name": file_path.stem,
+                    "path": str(file_path),
+                    "content": content,
+                    "type": "paper",
+                    "module": "papers"
+                }
+                documents.append(doc)
+            except Exception as e:
+                print(f"Warning: Could not load {file_path}: {e}")
         return documents

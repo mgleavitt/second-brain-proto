@@ -1,0 +1,14 @@
+Conversation: chat_20250721_191237
+Created: 2025-07-21T19:12:37.653889
+Last Updated: 2025-07-21T19:12:37.654297
+Total Messages: 2
+Total Cost: $0.0000
+Total Tokens: 0
+
+============================================================
+
+[2025-07-21 19:12:37] USER:
+Hello
+
+[2025-07-21 19:12:37] ASSISTANT:
+Hi there!

@@ -77,20 +77,22 @@ class SynthesisAgent(BaseAgent):  # pylint: disable=too-few-public-methods
         """Synthesize responses from multiple agents into a coherent answer."""
         if not agent_responses:
             return {
-                "synthesis": "No responses to synthesize.",
+                "response": "No responses to synthesize.",
                 "tokens_used": 0,
                 "cost": 0.0,
-                "duration": 0.0
+                "duration": 0.0,
+                "sources": []
             }
 
         if len(agent_responses) == 1:
             # Single response, return as-is
             response = agent_responses[0]
             return {
-                "synthesis": response.get("answer", response.get("response", "No answer provided")),
+                "response": response.get("answer", response.get("response", "No answer provided")),
                 "tokens_used": response.get("tokens_used", 0),
                 "cost": response.get("cost", 0.0),
-                "duration": response.get("duration", 0.0)
+                "duration": response.get("duration", 0.0),
+                "sources": [response.get("agent_name", "Agent 1")]
             }
 
         # Format responses for synthesis
@@ -104,10 +106,11 @@ class SynthesisAgent(BaseAgent):  # pylint: disable=too-few-public-methods
 
         result = self._invoke_llm_with_tracking(prompt)
         return {
-            "synthesis": result["answer"],
+            "response": result["answer"],
             "tokens_used": result["tokens_used"],
             "cost": result["cost"],
-            "duration": result["duration"]
+            "duration": result["duration"],
+            "sources": [f"Agent {i+1}" for i in range(len(agent_responses))]
         }
 
     def _create_synthesis_prompt(self, question: str, formatted_responses: List[str]) -> str:

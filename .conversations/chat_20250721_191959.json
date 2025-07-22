@@ -1,0 +1,51 @@
+{
+  "conversation_id": "chat_20250721_191959",
+  "created_at": "2025-07-21T19:19:59.017681",
+  "last_updated": "2025-07-21T19:22:01.851488",
+  "messages": [
+    {
+      "role": "user",
+      "content": "what is the airspeed velocity of an unladen swallow?",
+      "timestamp": "2025-07-21T19:21:18.261675",
+      "metadata": {}
+    },
+    {
+      "role": "assistant",
+      "content": "I understand you're asking about: Previous conversation:\nYou: what is the airspeed velocity of an unladen swallow?\n\nCurrent question: what is the airspeed velocity of an unladen swallow?. This is a demo response from the mock prototype.",
+      "timestamp": "2025-07-21T19:21:18.264476",
+      "metadata": {
+        "tokens": 60,
+        "cost": 0.0162,
+        "time_seconds": 0.000107,
+        "routing_decision": "mock",
+        "modules_used": [
+          "mock_module"
+        ],
+        "model": "mock-model"
+      }
+    },
+    {
+      "role": "user",
+      "content": "what do you know?",
+      "timestamp": "2025-07-21T19:22:01.848354",
+      "metadata": {}
+    },
+    {
+      "role": "assistant",
+      "content": "I understand you're asking about: Previous conversation:\nYou: what is the airspeed velocity of an unladen swallow?\nAssistant: I understand you're asking about: Previous conversation:\nYou: what is the airspeed velocity of an unladen swallow?\n\nCurrent question: what is the airspeed velocity of an unladen swallow?. This is a demo response from the mock prototype.\nYou: what do you know?\n\nCurrent question: what do you know?. This is a demo response from the mock prototype.",
+      "timestamp": "2025-07-21T19:22:01.851488",
+      "metadata": {
+        "tokens": 136,
+        "cost": 0.0398,
+        "time_seconds": 3.1e-05,
+        "routing_decision": "mock",
+        "modules_used": [
+          "mock_module"
+        ],
+        "model": "mock-model"
+      }
+    }
+  ],
+  "total_cost": 0.056,
+  "total_tokens": 196
+}

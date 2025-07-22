@@ -1,0 +1,20 @@
+Conversation: chat_20250721_190744
+Created: 2025-07-21T19:07:44.683471
+Last Updated: 2025-07-21T19:07:44.684675
+Total Messages: 4
+Total Cost: $0.0070
+Total Tokens: 28
+
+============================================================
+
+[2025-07-21 19:07:44] USER:
+Hello, what is Python?
+
+[2025-07-21 19:07:44] ASSISTANT:
+Python is a programming language.
+
+[2025-07-21 19:07:44] USER:
+Tell me more about its features.
+
+[2025-07-21 19:07:44] ASSISTANT:
+Python features include: simple syntax, extensive libraries, cross-platform compatibility, and strong community support.

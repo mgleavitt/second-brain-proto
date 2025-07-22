@@ -35,7 +35,7 @@ class BaseAgent:  # pylint: disable=too-few-public-methods
         self.total_cost = 0.0
         self.total_tokens = 0
 
-    def _invoke_llm_with_tracking(self, prompt: str) -> Dict[str, Any]:
+    def _invoke_llm_with_tracking(self, prompt: str, agent_name: Optional[str] = None) -> Dict[str, Any]:
         """Invoke LLM and track metrics (cost, tokens, duration)."""
         try:
             start_time = time.time()
@@ -50,7 +50,8 @@ class BaseAgent:  # pylint: disable=too-few-public-methods
                 "answer": response_text,
                 "tokens_used": tokens_used,
                 "cost": cost,
-                "duration": duration
+                "duration": duration,
+                "agent_name": agent_name or self.agent_type
             }
         except (ValueError, RuntimeError, ConnectionError, AttributeError) as e:
             error_msg = f"Error querying {self.agent_type}: {e}"
@@ -59,7 +60,8 @@ class BaseAgent:  # pylint: disable=too-few-public-methods
                 "answer": f"Error: {str(e)}",
                 "tokens_used": 0,
                 "cost": 0.0,
-                "duration": 0.0
+                "duration": 0.0,
+                "agent_name": agent_name or self.agent_type
             }
 
     def _estimate_tokens(self, prompt: str, response: str) -> int:

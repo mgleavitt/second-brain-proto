@@ -16,10 +16,12 @@ class ModuleAgent(BaseAgent):  # pylint: disable=too-many-instance-attributes
 
     def __init__(self, documents: List[Dict],
                  model_config: Optional[ModelConfig] = None,
-                 prompt_manager: Optional[PromptManager] = None):
+                 prompt_manager: Optional[PromptManager] = None,
+                 module_name: Optional[str] = None):
         """Initialize the ModuleAgent with documents, model config, and prompt manager."""
         super().__init__(model_config, prompt_manager, "module")
         self.documents = documents
+        self.module_name = module_name or "unknown_module"
 
         # Chunk all loaded documents
         self.chunks = self._load_and_chunk_documents()
@@ -34,7 +36,7 @@ class ModuleAgent(BaseAgent):  # pylint: disable=too-many-instance-attributes
                            if hasattr(doc, 'metadata') else 'Unknown')
             else:
                 content = doc.get('content', '')
-                doc_name = doc.get('source', 'Unknown')
+                doc_name = doc.get('name', 'Unknown')
 
             doc_chunks = self._semantic_chunk(content, doc_name)
             chunks.extend(doc_chunks)
@@ -92,7 +94,8 @@ class ModuleAgent(BaseAgent):  # pylint: disable=too-many-instance-attributes
                 "answer": "No relevant information found in this module",
                 "tokens_used": 0,
                 "cost": 0.0,
-                "duration": 0.0
+                "duration": 0.0,
+                "agent_name": self.module_name
             }
 
         context_parts = []
@@ -106,4 +109,4 @@ class ModuleAgent(BaseAgent):  # pylint: disable=too-many-instance-attributes
         system_prompt = self.prompt_manager.get_prompt("module")
         prompt = self._create_standard_prompt(system_prompt, context, question)
 
-        return self._invoke_llm_with_tracking(prompt)
+        return self._invoke_llm_with_tracking(prompt, agent_name=self.module_name)

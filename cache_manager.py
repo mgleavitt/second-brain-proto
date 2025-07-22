@@ -17,9 +17,15 @@ class SimpleCache:
         self.max_size = max_size
         self.ttl_hours = ttl_hours
 
-    def _get_key(self, query: str) -> str:
-        """Generate a cache key for a query."""
-        return hashlib.md5(query.encode()).hexdigest()
+    def _get_key(self, query: str, namespace: Optional[str] = None) -> str:
+        """Generate a cache key for a query with optional namespace."""
+        if namespace:
+            # For conversations, include namespace and context hash
+            key_data = f"{namespace}_{query}"
+            return hashlib.md5(key_data.encode()).hexdigest()
+        else:  # pylint: disable=no-else-return
+            # For single queries, use original behavior
+            return hashlib.md5(query.encode()).hexdigest()
 
     def _is_expired(self, timestamp: str) -> bool:
         """Check if a cache entry is expired."""
@@ -29,9 +35,9 @@ class SimpleCache:
         except (ValueError, TypeError):
             return True
 
-    def get(self, query: str) -> Optional[Dict[str, Any]]:
-        """Get a cached result for a query."""
-        key = self._get_key(query)
+    def get(self, query: str, namespace: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a cached result for a query with optional namespace."""
+        key = self._get_key(query, namespace)
 
         if key not in self.cache:
             return None
@@ -45,9 +51,9 @@ class SimpleCache:
 
         return entry['data']
 
-    def set(self, query: str, data: Dict[str, Any]) -> None:
-        """Cache a query result."""
-        key = self._get_key(query)
+    def set(self, query: str, data: Dict[str, Any], namespace: Optional[str] = None) -> None:
+        """Cache a query result with optional namespace."""
+        key = self._get_key(query, namespace)
 
         # Remove oldest entry if cache is full
         if len(self.cache) >= self.max_size:

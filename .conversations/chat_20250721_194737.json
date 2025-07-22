@@ -1,0 +1,15 @@
+{
+  "conversation_id": "chat_20250721_194737",
+  "created_at": "2025-07-21T19:47:37.986140",
+  "last_updated": "2025-07-21T19:47:48.293863",
+  "messages": [
+    {
+      "role": "user",
+      "content": "describe divide and conquer",
+      "timestamp": "2025-07-21T19:47:48.293863",
+      "metadata": {}
+    }
+  ],
+  "total_cost": 0.0,
+  "total_tokens": 0
+}
