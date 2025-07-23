@@ -1,0 +1,21 @@
+{
+  "conversation_id": "chat_20250722_160541",
+  "created_at": "2025-07-22T16:05:41.564594",
+  "last_updated": "2025-07-22T16:05:41.565101",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello",
+      "timestamp": "2025-07-22T16:05:41.564634",
+      "metadata": {}
+    },
+    {
+      "role": "assistant",
+      "content": "Hi there!",
+      "timestamp": "2025-07-22T16:05:41.565101",
+      "metadata": {}
+    }
+  ],
+  "total_cost": 0.0,
+  "total_tokens": 0
+}

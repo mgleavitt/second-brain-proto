@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pylint: disable=too-many-lines
 """
 Second Brain Prototype - Multi-Agent Document Synthesis System
 
@@ -49,7 +50,7 @@ class SimpleCache:  # pylint: disable=too-few-public-methods
         self.hits = 0
         self.misses = 0
 
-    def get(self, key: str, namespace: Optional[str] = None) -> Optional[Any]:
+    def get(self, key: str, namespace: Optional[str] = None) -> Optional[Any]:  # pylint: disable=unused-argument
         """Get value from cache with optional namespace."""
         # For now, ignore namespace to maintain backward compatibility
         if key in self.cache:
@@ -58,7 +59,7 @@ class SimpleCache:  # pylint: disable=too-few-public-methods
         self.misses += 1
         return None
 
-    def set(self, key: str, value: Any, namespace: Optional[str] = None) -> None:
+    def set(self, key: str, value: Any, namespace: Optional[str] = None) -> None:  # pylint: disable=unused-argument
         """Set value in cache with optional namespace."""
         # For now, ignore namespace to maintain backward compatibility
         self.cache[key] = value
@@ -102,7 +103,8 @@ class QueryLogger:  # pylint: disable=too-few-public-methods
 class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
     """Enhanced orchestrator with routing capabilities."""
 
-    def __init__(self, prompt_manager: Optional[PromptManager] = None, model_config: Optional['ModelConfig'] = None):
+    def __init__(self, prompt_manager: Optional[PromptManager] = None,
+                 model_config: Optional['ModelConfig'] = None):
         self.document_agents = []
         self.module_agents = {}  # New: module-based agents
         self.routing_agent = None  # Will be initialized when modules are added
@@ -121,10 +123,11 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         self.routing_config = {
             'threshold_percentage': 0.5,    # Include modules with >= 50% of top score
             'max_modules_default': 4,       # Default max modules to query
-            'sample_chunks': 10,            # Number of chunks to sample for routing
-            'weight_decay': True,           # Give more weight to earlier chunks
+            'sample_chunks': 5,             # Reduced: Number of chunks to sample for routing
+            'weight_decay': False,          # Disabled: Give more weight to earlier chunks
         }
         self._max_modules_override = None  # For dynamic adjustment based on complexity
+        self._routing_cache = {}  # Simple cache for routing decisions
 
     def add_document(self, name: str, path: str) -> None:
         """Add a document agent."""
@@ -142,7 +145,8 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
     def add_module(self, module_name: str, documents: List[Dict]) -> None:
         """Add a module agent for handling multiple related documents."""
         try:
-            agent = ModuleAgent(documents, model_config=self.model_config, prompt_manager=self.prompt_manager, module_name=module_name)
+            agent = ModuleAgent(documents, model_config=self.model_config,
+                               prompt_manager=self.prompt_manager, module_name=module_name)
             self.module_agents[module_name] = agent
             doc_count = len(documents)
             msg = (
@@ -153,6 +157,8 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
                 f"{Fore.GREEN}{msg}"
                 f"{Style.RESET_ALL}"
             )
+            # Clear routing cache when modules change
+            self._routing_cache.clear()
         except (ValueError, KeyError) as e:
             print(
                 f"{Fore.RED}\u2717 Failed to add module {module_name}: {e}"
@@ -191,7 +197,8 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
             except (FileNotFoundError, PermissionError) as e:
                 print(f"{Fore.RED}Error loading {path}: {e}{Style.RESET_ALL}")
 
-    def query(self, question: str, use_cache: bool = True, namespace: Optional[str] = None) -> Dict[str, Any]:  # pylint: disable=too-many-locals
+    def query(self, question: str, use_cache: bool = True,
+              namespace: Optional[str] = None) -> Dict[str, Any]:  # pylint: disable=too-many-locals
         """Query the second brain system.
 
         Args:
@@ -222,11 +229,17 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         print(f"{Fore.CYAN}Querying {agent_count} agents "
               f"({doc_count} documents, {module_count} modules)...{Style.RESET_ALL}")
 
-        # Query all agents
+                # Query all agents
         agent_responses = []
         for agent in all_agents:
-            agent_name = (agent.name if hasattr(agent, 'name')
-                         else agent.module_name)
+            # Get agent name with proper fallbacks
+            if hasattr(agent, 'name'):
+                agent_name = agent.name
+            elif hasattr(agent, 'module_name'):
+                agent_name = agent.module_name
+            else:
+                agent_name = 'Unknown Agent'
+
             print(f"  Querying {agent_name}...")
             response = agent.query(question)
             agent_responses.append(response)
@@ -359,7 +372,8 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         result["routing_decision"] = routing_decision
         return result
 
-    def query_with_routing(self, question: str, use_cache: bool = True, namespace: Optional[str] = None) -> Dict[str, Any]:  # pylint: disable=too-many-locals
+    def query_with_routing(self, question: str, use_cache: bool = True,
+                          namespace: Optional[str] = None) -> Dict[str, Any]:  # pylint: disable=too-many-locals
         """Query with intelligent routing based on content relevance.
 
         Args:
@@ -458,8 +472,18 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
 
         return result
 
+    def clear_routing_cache(self) -> None:
+        """Clear the routing cache to force recalculation."""
+        self._routing_cache.clear()
+        print(f"{Fore.YELLOW}Routing cache cleared{Style.RESET_ALL}")
+
     def _route_query(self, question: str) -> List[str]:  # pylint: disable=too-many-locals
         """Determine which modules are relevant to the query using content analysis."""
+        # Check routing cache first
+        cache_key = question.lower().strip()
+        if cache_key in self._routing_cache:
+            return self._routing_cache[cache_key]
+
         question_lower = question.lower()
         question_words = set(question_lower.split())
 
@@ -470,17 +494,12 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
             score = 0
             matches = 0
 
-            # Check chunk content for keyword matches
-            for i, chunk in enumerate(module_agent.chunks[:self.routing_config['sample_chunks']]):
+            # Check chunk content for keyword matches (optimized)
+            for chunk in module_agent.chunks[:self.routing_config['sample_chunks']]:
                 chunk_words = set(chunk['text'].lower().split())
                 common_words = question_words & chunk_words
                 if common_words:
-                    # Count matches but normalize by position (earlier chunks = higher weight)
-                    if self.routing_config['weight_decay']:
-                        weight = 1.0 / (i + 1)  # First chunk = 1.0, second = 0.5, etc.
-                    else:
-                        weight = 1.0
-                    matches += len(common_words) * weight
+                    matches += len(common_words)  # Simplified scoring
 
             # Normalize score by number of question words
             if len(question_words) > 0:
@@ -491,8 +510,8 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         # Sort modules by score
         sorted_modules = sorted(module_scores.items(), key=lambda x: x[1], reverse=True)
 
-        # Print all scores for debugging
-        for module_name, score in sorted_modules:
+        # Print only top scores for debugging (reduced output)
+        for module_name, score in sorted_modules[:3]:  # Only top 3
             print(f"  {module_name}: relevance score {score:.2f}")
 
         # Strategy 1: Include modules with score > X% of top score
@@ -506,9 +525,9 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
                     relevant_modules.append(module_name)
 
         # Strategy 2: Limit maximum modules to query
-        max_modules = getattr(self,  # pylint: disable=no-member
-                              '_max_modules_override',
-                              self.routing_config['max_modules_default'])
+        max_modules = getattr(self, '_max_modules_override', None)
+        if max_modules is None:
+            max_modules = self.routing_config['max_modules_default']
         if len(relevant_modules) > max_modules:
             limit_msg = f"Limiting to top {max_modules} modules for cost control"
             print(f"{Fore.YELLOW}{limit_msg}{Style.RESET_ALL}")
@@ -518,6 +537,9 @@ class SecondBrainPrototype:  # pylint: disable=too-many-instance-attributes
         if not relevant_modules and sorted_modules:
             print(f"{Fore.YELLOW}No modules met threshold, using top 2{Style.RESET_ALL}")
             relevant_modules = [m[0] for m in sorted_modules[:2]]
+
+        # Cache the result
+        self._routing_cache[cache_key] = relevant_modules
 
         return relevant_modules
 

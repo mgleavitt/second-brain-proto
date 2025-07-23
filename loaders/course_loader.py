@@ -47,7 +47,7 @@ class CourseModuleLoader:  # pylint: disable=too-few-public-methods
                     "module": module_dir.name
                 }
                 documents.append(doc)
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 print(f"Warning: Could not load {file_path}: {e}")
         return documents
 
@@ -65,6 +65,6 @@ class CourseModuleLoader:  # pylint: disable=too-few-public-methods
                     "module": "papers"
                 }
                 documents.append(doc)
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 print(f"Warning: Could not load {file_path}: {e}")
         return documents

@@ -173,6 +173,35 @@ class ConversationManager:
         self.logger.info("Added %s message to conversation %s", role, self.conversation_id)
         return message
 
+    def build_prompt(self, current_query: str) -> str:
+        """Build a prompt for the lightweight model using recent conversation context."""
+        if not self.conversation.messages:
+            return current_query
+
+        # Get recent messages for context (last 3 exchanges)
+        recent_messages = self.conversation.messages[-6:] \
+            if len(self.conversation.messages) >= 6 else self.conversation.messages
+
+        # Build conversation history
+        conversation_parts = []
+        for msg in recent_messages:
+            if msg.role == "user":
+                conversation_parts.append(f"User: {msg.content}")
+            elif msg.role == "assistant":
+                conversation_parts.append(f"Assistant: {msg.content}")
+
+        conversation_history = "\n".join(conversation_parts)
+
+        # Build the prompt
+        prompt = f"""Previous conversation:
+{conversation_history}
+
+Current query: {current_query}
+
+Please provide a helpful response to the current query, taking into account the conversation context."""  # pylint: disable=line-too-long
+
+        return prompt
+
     def get_context_window(self, max_tokens: int = 8000,
                           strategy: str = "recent") -> List[Message]:
         """Get messages within the context window.

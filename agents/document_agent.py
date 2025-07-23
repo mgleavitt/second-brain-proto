@@ -6,6 +6,7 @@ multi-document LLM-based querying.
 """
 
 from typing import Dict, Any, List, Optional
+import hashlib
 from prompt_manager import PromptManager
 from model_config import ModelConfig
 from .base_agent import BaseAgent
@@ -29,29 +30,96 @@ class DocumentAgent(BaseAgent):  # pylint: disable=too-few-public-methods,too-ma
         super().__init__(model_config, prompt_manager, "document")
         self.documents = documents
 
-    def query(self, question: str) -> Dict[str, Any]:  # pylint: disable=too-many-locals
-        """Query the documents for an answer to the given question."""
-        # Create context from all documents
-        context_parts = []
+        # Chunk all loaded documents (same as ModuleAgent)
+        self.chunks = self._load_and_chunk_documents()
+
+    @property
+    def name(self) -> str:
+        """Get the name of this document agent based on its documents."""
+        if not self.documents:
+            return "Empty Document Agent"
+
+        first_doc = self.documents[0]
+        if isinstance(first_doc, dict):
+            return first_doc.get('name', 'Document Agent')
+        else:
+            return 'Document Agent'
+
+    def _load_and_chunk_documents(self) -> List[Dict]:
+        """Load and chunk all documents using semantic chunking (same as ModuleAgent)."""
+        chunks = []
         for doc in self.documents:
             if hasattr(doc, 'page_content'):
                 content = doc.page_content
-                source = (doc.metadata.get('source', 'Unknown')
-                         if hasattr(doc, 'metadata') else 'Unknown')
+                doc_name = (doc.metadata.get('source', 'Unknown')
+                           if hasattr(doc, 'metadata') else 'Unknown')
             else:
                 content = doc.get('content', '')
-                source = doc.get('source', 'Unknown')
+                doc_name = doc.get('name', 'Unknown')
 
-            if question.lower() in content.lower():
-                context_parts.append(f"From {source}\n---\n{content}")
+            doc_chunks = self._semantic_chunk(content, doc_name)
+            chunks.extend(doc_chunks)
+        return chunks
 
-        if not context_parts:
+    def _semantic_chunk(self, content: str, doc_name: str,
+                       chunk_size: int = 2000, overlap: int = 200) -> List[Dict]:
+        """Create semantic chunks preserving context (same as ModuleAgent)."""
+        chunks = []
+        paragraphs = content.split('\n\n')
+        current_chunk = []
+        current_size = 0
+        for para in paragraphs:
+            para_size = len(para)
+            if current_size + para_size > chunk_size and current_chunk:
+                chunk_text = '\n\n'.join(current_chunk)
+                chunks.append({
+                    'text': chunk_text,
+                    'doc_name': doc_name,
+                    'chunk_id': hashlib.md5(chunk_text.encode()).hexdigest()[:8]
+                })
+                if overlap > 0 and len(current_chunk) > 1:
+                    current_chunk = current_chunk[-2:]
+                    current_size = sum(len(p) for p in current_chunk)
+                else:
+                    current_chunk = []
+                    current_size = 0
+            current_chunk.append(para)
+            current_size += para_size
+        if current_chunk:
+            chunk_text = '\n\n'.join(current_chunk)
+            chunks.append({
+                'text': chunk_text,
+                'doc_name': doc_name,
+                'chunk_id': hashlib.md5(chunk_text.encode()).hexdigest()[:8]
+            })
+        return chunks
+
+    def search_chunks(self, query: str, top_k: int = 5) -> List[Dict]:
+        """Search for relevant chunks using keyword matching (same as ModuleAgent)."""
+        query_words = set(query.lower().split())
+        scored_chunks = []
+        for chunk in self.chunks:
+            chunk_words = set(chunk['text'].lower().split())
+            score = len(query_words & chunk_words) / len(query_words) if query_words else 0
+            scored_chunks.append((score, chunk))
+        scored_chunks.sort(key=lambda x: x[0], reverse=True)
+        return [chunk for _, chunk in scored_chunks[:top_k]]
+
+    def query(self, question: str) -> Dict[str, Any]:  # pylint: disable=too-many-locals
+        """Query the documents for an answer to the given question (same as ModuleAgent)."""
+        relevant_chunks = self.search_chunks(question, top_k=5)
+        if not relevant_chunks:
             return {
                 "answer": "No relevant information found in the loaded documents.",
                 "tokens_used": 0,
                 "cost": 0.0,
-                "duration": 0.0
+                "duration": 0.0,
+                "agent_name": self.name
             }
+
+        context_parts = []
+        for chunk in relevant_chunks:
+            context_parts.append(f"From {chunk['doc_name']}:\n{chunk['text']}")
 
         context = "\n\n---\n\n".join(context_parts)
         if len(context) > 8000:
@@ -61,10 +129,9 @@ class DocumentAgent(BaseAgent):  # pylint: disable=too-few-public-methods,too-ma
         system_prompt = self.prompt_manager.get_prompt("document_single")
         prompt = self._create_standard_prompt(system_prompt, context, question)
 
-        return self._invoke_llm_with_tracking(prompt)
-
-
-
+        result = self._invoke_llm_with_tracking(prompt)
+        result["agent_name"] = self.name
+        return result
 
 class SynthesisAgent(BaseAgent):  # pylint: disable=too-few-public-methods
     """Synthesizes responses from multiple document agents."""

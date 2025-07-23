@@ -5,18 +5,21 @@ context building, and integration with the existing SecondBrainPrototype.
 """
 
 import logging
-from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime
+from typing import Dict, Optional, Any, Tuple
 from colorama import Fore, Style
 
-from conversation_manager import ConversationManager, Message
-from prototype import SecondBrainPrototype
+from chat_controller import ChatController
+from light_chat_model import get_lightweight_chat_call
+from complexity_analyzer import classify_query
+from context_filter import build_context
+from conversation_manager import ConversationManager
+# Removed circular import - using type hints with string literals
 
 
 class ChatInterface:
     """Provides dedicated chat interaction interface."""
 
-    def __init__(self, prototype: SecondBrainPrototype,
+    def __init__(self, prototype: "SecondBrainPrototype",
                  max_context_tokens: int = 8000,
                  context_strategy: str = "recent",
                  show_cost_per_message: bool = True,
@@ -38,8 +41,13 @@ class ChatInterface:
 
         self.conversation_manager: Optional[ConversationManager] = None
         self.is_chat_active = False
+        self.controller = None  # Will be initialized after conversation manager is created
 
         self.logger = logging.getLogger(__name__)
+
+        # Initialize attributes that were defined outside __init__
+        self._last_result_cache = None
+        self._last_result_namespace = None
 
     def start_chat(self, conversation_id: Optional[str] = None) -> None:
         """Start chat mode with optional conversation ID.
@@ -54,6 +62,16 @@ class ChatInterface:
                 persistence_dir=".conversations"
             )
 
+            # Initialize ChatController with the conversation manager
+            self.controller = ChatController(
+                conversation_manager=self.conversation_manager,
+                prototype=self.prototype,
+                light_model_call=get_lightweight_chat_call(),
+                classify_query=classify_query,
+                build_context=build_context,
+                max_ctx_tokens=self.max_context_tokens
+            )
+
             self.is_chat_active = True
 
             # Display welcome message
@@ -62,7 +80,7 @@ class ChatInterface:
             # Enter chat loop
             self._chat_loop()
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             self.logger.error("Failed to start chat: %s", e)
             print(f"{Fore.RED}Error starting chat: {e}{Style.RESET_ALL}")
             self.is_chat_active = False
@@ -73,13 +91,15 @@ class ChatInterface:
         stats = self.conversation_manager.get_statistics()
 
         print(f"\n{Fore.CYAN}{'='*60}")
-        print(f"Second Brain Chat Mode")
+        print("Second Brain Chat Mode")
         print(f"Conversation: {conversation_id}")
         print(f"{'='*60}{Style.RESET_ALL}")
 
         if stats["total_messages"] > 0:
-            print(f"{Fore.YELLOW}Loaded existing conversation with {stats['total_messages']} messages")
-            print(f"Total cost: ${stats['total_cost']:.4f} | Duration: {stats['duration_minutes']:.1f} minutes{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}Loaded existing conversation with "
+                  f"{stats['total_messages']} messages")
+            print(f"Total cost: ${stats['total_cost']:.4f} | "
+                  f"Duration: {stats['duration_minutes']:.1f} minutes{Style.RESET_ALL}")
         else:
             print(f"{Fore.GREEN}Starting new conversation{Style.RESET_ALL}")
 
@@ -95,8 +115,9 @@ class ChatInterface:
         """Main chat interaction loop."""
         while self.is_chat_active:
             try:
-                # Get user input
-                user_input = input(f"{Fore.GREEN}You:{Style.RESET_ALL} ").strip()
+                # Get user input with better terminal handling
+                print(f"{Fore.GREEN}You:{Style.RESET_ALL} ", end='', flush=True)
+                user_input = input().strip()
 
                 if not user_input:
                     continue
@@ -116,7 +137,7 @@ class ChatInterface:
             except EOFError:
                 print(f"\n{Fore.YELLOW}End of input{Style.RESET_ALL}")
                 break
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 self.logger.error("Error in chat loop: %s", e)
                 print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
 
@@ -129,22 +150,25 @@ class ChatInterface:
         if cmd == "/help":
             self._display_help()
             return True
-        elif cmd == "/stats":
+        if cmd == "/stats":
             self._display_statistics()
             return True
-        elif cmd == "/export":
+        if cmd == "/routing":
+            self._display_routing_statistics()
+            return True
+        if cmd == "/export":
             self._export_conversation(arg)
             return True
-        elif cmd == "/clear":
+        if cmd == "/clear":
             self._clear_conversation()
             return True
-        elif cmd == "/exit":
+        if cmd == "/exit":
             self._exit_chat()
             return False
-        else:
-            print(f"{Fore.RED}Unknown command: {cmd}{Style.RESET_ALL}")
-            print(f"Type /help for available commands")
-            return True
+
+        print(f"{Fore.RED}Unknown command: {cmd}{Style.RESET_ALL}")
+        print("Type /help for available commands")
+        return True
 
     def _display_help(self) -> None:
         """Display help information."""
@@ -154,6 +178,7 @@ class ChatInterface:
         print()
         print("  /help          - Show this help")
         print("  /stats         - Show conversation statistics")
+        print("  /routing       - Show routing statistics")
         print("  /export [file] - Export conversation to text file")
         print("  /clear         - Clear current conversation")
         print("  /exit          - Exit chat mode")
@@ -183,6 +208,35 @@ class ChatInterface:
             avg_cost = stats['total_cost'] / stats['total_messages']
             print(f"  Average Cost per Message: ${avg_cost:.4f}")
 
+    def _display_routing_statistics(self) -> None:
+        """Display routing statistics from the ChatController."""
+        if not self.controller:
+            print(f"{Fore.RED}No controller available{Style.RESET_ALL}")
+            return
+
+        stats = self.controller.get_routing_statistics()
+        if not stats:
+            print(f"{Fore.YELLOW}No routing statistics available yet{Style.RESET_ALL}")
+            return
+
+        print(f"\n{Fore.CYAN}Routing Statistics:{Style.RESET_ALL}")
+        print(f"  Total Queries: {stats['total_queries']}")
+        print(f"  Lightweight Queries: {stats['lightweight_queries']} "
+              f"({stats['lightweight_percentage']:.1f}%)")
+        print(f"  Agent Queries: {stats['agent_queries']}")
+        print(f"  Total Lightweight Cost: ${stats['total_lightweight_cost']:.4f}")
+        print(f"  Total Agent Cost: ${stats['total_agent_cost']:.4f}")
+        print(f"  Total Cost: ${stats['total_cost']:.4f}")
+        print(f"  Average Cost per Query: ${stats['average_cost_per_query']:.4f}")
+
+        # Show cost savings if we have both types
+        if stats['lightweight_queries'] > 0 and stats['agent_queries'] > 0:
+            avg_lightweight_cost = (stats['total_lightweight_cost'] /
+                                   stats['lightweight_queries'])
+            avg_agent_cost = stats['total_agent_cost'] / stats['agent_queries']
+            cost_savings = (avg_agent_cost - avg_lightweight_cost) * stats['lightweight_queries']
+            print(f"  Estimated Cost Savings: ${cost_savings:.4f}")
+
     def _export_conversation(self, file_path: str) -> None:
         """Export conversation to text file."""
         if not self.conversation_manager:
@@ -193,10 +247,10 @@ class ChatInterface:
             if not file_path:
                 file_path = f"{self.conversation_manager.conversation_id}_export.txt"
 
-            content = self.conversation_manager.export_to_text(file_path)
+            self.conversation_manager.export_to_text(file_path)
             print(f"{Fore.GREEN}Conversation exported to: {file_path}{Style.RESET_ALL}")
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             self.logger.error("Failed to export conversation: %s", e)
             print(f"{Fore.RED}Failed to export conversation: {e}{Style.RESET_ALL}")
 
@@ -206,7 +260,8 @@ class ChatInterface:
             print(f"{Fore.RED}No active conversation{Style.RESET_ALL}")
             return
 
-        response = input(f"{Fore.YELLOW}Are you sure you want to clear this conversation? (y/N): {Style.RESET_ALL}")
+        response = input(f"{Fore.YELLOW}Are you sure you want to clear this "
+                        f"conversation? (y/N): {Style.RESET_ALL}")
         if response.lower() in ['y', 'yes']:
             self.conversation_manager.clear()
             print(f"{Fore.GREEN}Conversation cleared{Style.RESET_ALL}")
@@ -231,58 +286,59 @@ class ChatInterface:
             print(f"{Fore.RED}No active conversation{Style.RESET_ALL}")
             return
 
+        if not self.controller:
+            print(f"{Fore.RED}Chat controller not initialized{Style.RESET_ALL}")
+            return
+
         try:
-            # Add user message to conversation
-            user_message = self.conversation_manager.add_message("user", user_input)
-
-            # Check if this is a follow-up question that can use cached results
-            is_followup, cached_result = self._check_followup_question(user_input)
-
-            if is_followup and cached_result:
-                # Use cached result for follow-up questions
-                print(f"{Fore.CYAN}Using cached results for follow-up question{Style.RESET_ALL}")
-                result = cached_result
-            else:
-                # Build context-aware query
-                enriched_query = self._build_context_prompt(user_input)
-
-                # Route through existing pipeline
-                start_time = datetime.now()
-                # Use conversation ID as namespace for cache isolation
-                namespace = f"conv_{self.conversation_manager.conversation_id}"
-                result = self.prototype.query_with_routing(enriched_query, use_cache=True, namespace=namespace)
-                end_time = datetime.now()
-
-                # Store result for potential follow-up questions
-                self._cache_last_result(result, namespace)
+            # Route via enhanced ChatController
+            result = self.controller.process_message(user_input)
 
             # Extract response and metadata
-            response = result.get("response", "No response generated")
-            cost = result.get("total_cost", 0.0)
-            tokens = result.get("total_tokens", 0)
-            time_taken = result.get("duration", 0.0)  # Use duration from result if available
-
-            # Add assistant response to conversation
-            metadata = {
-                "tokens": tokens,
-                "cost": cost,
-                "time_seconds": time_taken,
-                "routing_decision": result.get("routing_decision", "unknown"),
-                "modules_used": result.get("modules_used", []),
-                "model": result.get("model_used", "unknown"),
-                "used_cache": is_followup and cached_result is not None
+            response_text = result["response"]
+            meta = {
+                "routing": result["route"],
+                "category": result["category"],
+                "confidence": result["confidence"],
+                "cost": result["cost"],
+                "context_size": result["context_size"],
+                "reasoning": result["reasoning"]
             }
 
-            assistant_message = self.conversation_manager.add_message(
-                "assistant", response, metadata=metadata
-            )
+            # Add assistant message to conversation
+            self.conversation_manager.add_message("assistant", response_text, metadata=meta)
 
-            # Display response
-            self._display_response(response, metadata)
+            # Display response with enhanced metadata
+            self._display_response(response_text, meta)
 
-        except Exception as e:
+            # Show routing information if enabled
+            if self.show_cost_per_message:
+                self._display_routing_info(result)
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
             self.logger.error("Error processing message: %s", e)
             print(f"{Fore.RED}Error processing message: {e}{Style.RESET_ALL}")
+
+    def _display_routing_info(self, result: Dict[str, Any]) -> None:
+        """Display routing decision information."""
+        route = result["route"]
+        category = result["category"]
+        confidence = result["confidence"]
+        cost = result["cost"]
+        reasoning = result["reasoning"]
+
+        # Color coding for routes
+        route_color = Fore.GREEN if route == "lightweight" else Fore.YELLOW
+        category_color = Fore.CYAN
+
+        print(f"\n{Fore.BLUE}Routing Info:{Style.RESET_ALL}")
+        print(f"  Route: {route_color}{route}{Style.RESET_ALL}")
+        print(f"  Category: {category_color}{category}{Style.RESET_ALL}")
+        print(f"  Confidence: {confidence:.2f}")
+        print(f"  Cost: ${cost:.4f}")
+        if reasoning:
+            print(f"  Reasoning: {reasoning}")
+        print()
 
     def _check_followup_question(self, user_input: str) -> Tuple[bool, Optional[Dict]]:
         """Check if this is a follow-up question that can use cached results."""
@@ -353,7 +409,13 @@ class ChatInterface:
         current_words = set(current_input_lower.split())
 
         # Filter out common words
-        common_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "is", "are", "was", "were", "be", "been", "have", "has", "had", "do", "does", "did", "will", "would", "could", "should", "can", "may", "might", "this", "that", "these", "those", "it", "its", "they", "them", "their"}
+        common_words = {
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "is", "are", "was", "were", "be", "been",
+            "have", "has", "had", "do", "does", "did", "will", "would",
+            "could", "should", "can", "may", "might", "this", "that",
+            "these", "those", "it", "its", "they", "them", "their"
+        }
 
         last_keywords = last_words - common_words
         current_keywords = current_words - common_words
@@ -418,9 +480,9 @@ class ChatInterface:
         """Count tokens in text using conversation manager's tokenizer."""
         if self.conversation_manager and self.conversation_manager.tokenizer:
             return len(self.conversation_manager.tokenizer.encode(text))
-        else:
-            # Fallback estimation
-            return len(text) // 4
+
+        # Fallback estimation
+        return len(text) // 4
 
     def _display_response(self, response: str, metadata: Dict[str, Any]) -> None:
         """Display assistant response with optional metadata."""

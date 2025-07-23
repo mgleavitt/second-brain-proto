@@ -3,7 +3,7 @@ import cmd
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import logging
 from datetime import datetime
 from colorama import init, Fore, Style
@@ -21,6 +21,8 @@ from agents.routing_agent import RoutingAgent
 from loaders.document_loader import DocumentLoader
 from summarizer import ModuleSummarizer
 from evaluation_framework import QueryEvaluator
+# Removed circular import - will import locally when needed
+from chat_interface import ChatInterface
 
 # Conditional imports for optional features
 try:
@@ -82,7 +84,7 @@ Type /help for available commands
                           format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
 
-    def do_help(self, arg):
+    def do_help(self, arg: str) -> None:
         """Show available commands."""
         if arg:
             # Show help for specific command
@@ -120,7 +122,7 @@ Type /help for available commands
                 print(f"  {Fore.GREEN}{cmd_syntax:<30}{Style.RESET_ALL} {description}")
             print()
 
-    def do_load(self, arg):
+    def do_load(self, arg: str) -> None:
         """Load documents from a path. Usage: /load <path> [--recursive]"""
         parts = arg.split()
         if not parts:
@@ -151,7 +153,7 @@ Type /help for available commands
             print(f"{Fore.RED}Error loading documents: {e}{Style.RESET_ALL}")
             self.logger.exception("Error in load command")
 
-    def do_query(self, arg):
+    def do_query(self, arg: str) -> None:
         """Query the loaded documents. Usage: /query <question> [--no-cache] [--no-routing]"""
         if not arg:
             print(f"{Fore.RED}Error: Please provide a question{Style.RESET_ALL}")
@@ -372,7 +374,7 @@ Type /help for available commands
                 'time': 0.0
             }
 
-    def do_model(self, arg):
+    def do_model(self, arg: str) -> None:
         """Set model for an agent type. Usage: /model <agent_type> <model_name>"""
         parts = arg.split()
         if len(parts) != 2:
@@ -393,7 +395,7 @@ Type /help for available commands
         except ValueError as e:
             print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
 
-    def do_costs(self, _arg):
+    def do_costs(self, _arg: str) -> None:
         """Show cost summary for all queries."""
         summary = self.query_logger.get_summary()
 
@@ -424,7 +426,7 @@ Type /help for available commands
                       headers=["Agent Type", "Model", "Input $/1M", "Output $/1M"],
                       tablefmt="grid"))
 
-    def do_status(self, _arg):
+    def do_status(self, _arg: str) -> None:
         """Show system status."""
         print(f"\n{Fore.CYAN}System Status:{Style.RESET_ALL}")
         doc_count = sum(len(agent.documents) for agent in self.document_agents.values())
@@ -439,7 +441,7 @@ Type /help for available commands
             for path in self.loaded_paths:
                 print(f"  - {path}")
 
-    def do_save(self, arg):
+    def do_save(self, arg: str) -> None:
         """Save session state. Usage: /save <filename>"""
         if not arg:
             print(f"{Fore.RED}Error: Please provide a filename{Style.RESET_ALL}")
@@ -465,17 +467,17 @@ Type /help for available commands
         except (OSError, ValueError, RuntimeError) as e:
             print(f"{Fore.RED}Error saving session: {e}{Style.RESET_ALL}")
 
-    def do_exit(self, _arg):
+    def do_exit(self, _arg: str) -> bool:
         """Exit interactive mode."""
         print(f"{Fore.YELLOW}Goodbye!{Style.RESET_ALL}")
         return True
 
-    def do_clear_cache(self, _arg):
+    def do_clear_cache(self, _arg: str) -> None:
         """Clear the query cache."""
         self.cache.clear()
         print(f"{Fore.GREEN}Cache cleared{Style.RESET_ALL}")
 
-    def do_rebuild(self, _arg):
+    def do_rebuild(self, _arg: str) -> None:
         """Reload all documents from loaded paths."""
         if not self.loaded_paths:
             print(f"{Fore.YELLOW}No paths to reload{Style.RESET_ALL}")
@@ -500,7 +502,7 @@ Type /help for available commands
         self._update_routing_agent()
         print(f"{Fore.GREEN}Rebuild complete{Style.RESET_ALL}")
 
-    def do_settings(self, _arg):
+    def do_settings(self, _arg: str) -> None:
         """Show current settings."""
         print(f"\n{Fore.CYAN}Current Settings:{Style.RESET_ALL}")
         settings = [
@@ -512,19 +514,19 @@ Type /help for available commands
         for name, value in settings:
             print(f"{name}: {value}")
 
-    def do_toggle_routing(self, _arg):
+    def do_toggle_routing(self, _arg: str) -> None:
         """Toggle query routing on/off."""
         self.use_routing = not self.use_routing
         status = "Enabled" if self.use_routing else "Disabled"
         print(f"{Fore.GREEN}Routing {status}{Style.RESET_ALL}")
 
-    def do_toggle_cache(self, _arg):
+    def do_toggle_cache(self, _arg: str) -> None:
         """Toggle caching on/off."""
         self.use_cache = not self.use_cache
         status = "Enabled" if self.use_cache else "Disabled"
         print(f"{Fore.GREEN}Caching {status}{Style.RESET_ALL}")
 
-    def do_summarize(self, arg):
+    def do_summarize(self, arg: str) -> None:
         """Generate or regenerate module summaries. Usage: /summarize [--force]"""
         force = "--force" in arg
 
@@ -740,47 +742,33 @@ Type /help for available commands
 
     def _reinitialize_agents(self):
         """Reinitialize agents with new model configuration."""
-        # Reinitialize all agents with updated model config
+        # Reinitialize document agents
         for agent in self.document_agents.values():
-            agent.model_config = self.model_config
-            agent.model_name = self.model_config.get_model_name("document")
-            # Reinitialize LLM based on provider
-            model_info = self.model_config.get_model_info("document")
-            if model_info.provider == "google":
-                agent.llm = ChatGoogleGenerativeAI(model=agent.model_name)
-            else:
-                agent.llm = ChatAnthropic(model=agent.model_name)
+            self._reinitialize_single_agent(agent, "document")
 
+        # Reinitialize module agents
         for agent in self.module_agents.values():
-            agent.model_config = self.model_config
-            agent.model_name = self.model_config.get_model_name("module")
-            # Reinitialize LLM based on provider
-            model_info = self.model_config.get_model_info("module")
-            if model_info.provider == "google":
-                agent.llm = ChatGoogleGenerativeAI(model=agent.model_name)
-            else:
-                agent.llm = ChatAnthropic(model=agent.model_name)
+            self._reinitialize_single_agent(agent, "module")
 
+        # Reinitialize routing agent
         if self.routing_agent:
-            self.routing_agent.model_config = self.model_config
-            self.routing_agent.model_name = self.model_config.get_model_name("routing")
-            # Reinitialize LLM based on provider
-            model_info = self.model_config.get_model_info("routing")
-            if model_info.provider == "google":
-                self.routing_agent.llm = ChatGoogleGenerativeAI(model=self.routing_agent.model_name)
-            else:
-                self.routing_agent.llm = ChatAnthropic(model=self.routing_agent.model_name)
+            self._reinitialize_single_agent(self.routing_agent, "routing")
 
+        # Reinitialize synthesis agent
         if self.synthesis_agent:
-            self.synthesis_agent.model_config = self.model_config
-            self.synthesis_agent.model_name = self.model_config.get_model_name("synthesis")
-            # Reinitialize LLM based on provider
-            model_info = self.model_config.get_model_info("synthesis")
-            if model_info.provider == "google":
-                self.synthesis_agent.llm = ChatGoogleGenerativeAI(
-                    model=self.synthesis_agent.model_name)
-            else:
-                self.synthesis_agent.llm = ChatAnthropic(model=self.synthesis_agent.model_name)
+            self._reinitialize_single_agent(self.synthesis_agent, "synthesis")
+
+    def _reinitialize_single_agent(self, agent: Any, agent_type: str) -> None:
+        """Reinitialize a single agent with new model configuration."""
+        agent.model_config = self.model_config
+        agent.model_name = self.model_config.get_model_name(agent_type)
+
+        # Reinitialize LLM based on provider
+        model_info = self.model_config.get_model_info(agent_type)
+        if model_info.provider == "google":
+            agent.llm = ChatGoogleGenerativeAI(model=agent.model_name)
+        else:
+            agent.llm = ChatAnthropic(model=agent.model_name)
 
     def do_chat(self, arg):
         """Start chat mode or manage conversations. Usage: /chat [new|load <id>|list|exit]"""
@@ -804,131 +792,160 @@ Type /help for available commands
             self._list_conversations()
         elif command == "exit":
             if self.chat_interface and self.chat_interface.is_active():
+                # pylint: disable=protected-access
                 self.chat_interface._exit_chat()
+                # pylint: enable=protected-access
             else:
                 print(f"{Fore.YELLOW}No active chat session{Style.RESET_ALL}")
         else:
             print(f"{Fore.RED}Unknown chat command: {command}{Style.RESET_ALL}")
-            print(f"Usage: /chat [new|load <id>|list|exit]")
+            print("Usage: /chat [new|load <id>|list|exit]")
 
     def do_conversations(self, arg):
         """List saved conversations. Usage: /conversations [--detailed]"""
         self._list_conversations(detailed="--detailed" in arg.split())
 
-    def _start_chat_mode(self, conversation_id: Optional[str] = None):
+    def _start_chat_mode(self, conversation_id: Optional[str] = None) -> None:
         """Start chat mode with optional conversation ID."""
         try:
             # Create prototype instance for chat interface
-            from prototype import SecondBrainPrototype
-            prototype = SecondBrainPrototype()
+            prototype = self._create_prototype_instance()
 
             # Load existing documents into prototype
             for path in self.loaded_paths:
                 prototype.load_from_paths([path], recursive=False)
 
             # Create and start chat interface
-            from chat_interface import ChatInterface
-            self.chat_interface = ChatInterface(
-                prototype=prototype,
-                max_context_tokens=8000,
-                context_strategy="recent",
-                show_cost_per_message=True,
-                show_token_usage=False
-            )
-
+            self.chat_interface = self._create_chat_interface(prototype)
             self.chat_interface.start_chat(conversation_id)
 
-        except Exception as e:
+        except Exception as e: # pylint: disable=broad-exception-caught
             self.logger.error("Failed to start chat mode: %s", e)
             print(f"{Fore.RED}Error starting chat mode: {e}{Style.RESET_ALL}")
 
-    def _list_conversations(self, detailed: bool = False):
+    def _create_prototype_instance(self) -> Any:
+        """Create a SecondBrainPrototype instance."""
+        from prototype import SecondBrainPrototype # pylint: disable=import-outside-toplevel
+        return SecondBrainPrototype()
+
+    def _create_chat_interface(self, prototype: Any) -> Any:
+        """Create a ChatInterface instance."""
+        return ChatInterface(
+            prototype=prototype,
+            max_context_tokens=8000,
+            context_strategy="recent",
+            show_cost_per_message=True,
+            show_token_usage=False
+        )
+
+    def _list_conversations(self, detailed: bool = False) -> None:
         """List saved conversations."""
         try:
-            from pathlib import Path
-            import json
-            from datetime import datetime
-
-            conversations_dir = Path(".conversations")
-            if not conversations_dir.exists():
-                print(f"{Fore.YELLOW}No conversations directory found{Style.RESET_ALL}")
+            conversations = self._load_conversation_data()
+            if not conversations:
                 return
-
-            conversation_files = list(conversations_dir.glob("*.json"))
-            if not conversation_files:
-                print(f"{Fore.YELLOW}No saved conversations found{Style.RESET_ALL}")
-                return
-
-            print(f"\n{Fore.CYAN}Saved Conversations:{Style.RESET_ALL}")
-
-            conversations = []
-            for file_path in conversation_files:
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-
-                    conversation_id = data.get("conversation_id", file_path.stem)
-                    created_at = data.get("created_at", "")
-                    last_updated = data.get("last_updated", "")
-                    total_messages = len(data.get("messages", []))
-                    total_cost = data.get("total_cost", 0.0)
-
-                    # Parse timestamps
-                    try:
-                        created_dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                        updated_dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
-                        created_str = created_dt.strftime("%Y-%m-%d %H:%M")
-                        updated_str = updated_dt.strftime("%Y-%m-%d %H:%M")
-                    except (ValueError, AttributeError):
-                        created_str = created_at[:19] if created_at else "Unknown"
-                        updated_str = last_updated[:19] if last_updated else "Unknown"
-
-                    conversations.append({
-                        'id': conversation_id,
-                        'created': created_str,
-                        'updated': updated_str,
-                        'messages': total_messages,
-                        'cost': total_cost
-                    })
-
-                except (json.JSONDecodeError, OSError) as e:
-                    self.logger.warning("Failed to read conversation file %s: %s", file_path, e)
-                    continue
 
             # Sort by last updated (most recent first)
             conversations.sort(key=lambda x: x['updated'], reverse=True)
 
             if detailed:
-                # Detailed view with table
-                headers = ["ID", "Created", "Updated", "Messages", "Cost"]
-                table_data = []
-                for conv in conversations:
-                    table_data.append([
-                        conv['id'],
-                        conv['created'],
-                        conv['updated'],
-                        str(conv['messages']),
-                        f"${conv['cost']:.4f}"
-                    ])
-
-                from tabulate import tabulate
-                print(tabulate(table_data, headers=headers, tablefmt="grid"))
+                self._display_detailed_conversations(conversations)
             else:
-                # Simple list
-                for conv in conversations:
-                    print(f"  {Fore.GREEN}{conv['id']:<20}{Style.RESET_ALL} "
-                          f"{conv['messages']:>3} messages, "
-                          f"${conv['cost']:.4f}, "
-                          f"updated {conv['updated']}")
+                self._display_simple_conversations(conversations)
 
             print()
 
-        except Exception as e:
+        except Exception as e: # pylint: disable=broad-exception-caught
             self.logger.error("Failed to list conversations: %s", e)
             print(f"{Fore.RED}Error listing conversations: {e}{Style.RESET_ALL}")
 
+    def _load_conversation_data(self) -> List[Dict[str, Any]]:
+        """Load conversation data from files."""
+        conversations_dir = Path(".conversations")
+        if not conversations_dir.exists():
+            print(f"{Fore.YELLOW}No conversations directory found{Style.RESET_ALL}")
+            return []
+
+        conversation_files = list(conversations_dir.glob("*.json"))
+        if not conversation_files:
+            print(f"{Fore.YELLOW}No saved conversations found{Style.RESET_ALL}")
+            return []
+
+        print(f"\n{Fore.CYAN}Saved Conversations:{Style.RESET_ALL}")
+
+        conversations = []
+        for file_path in conversation_files:
+            conversation_data = self._parse_conversation_file(file_path)
+            if conversation_data:
+                conversations.append(conversation_data)
+
+        return conversations
+
+    def _parse_conversation_file(self, file_path: Path) -> Optional[Dict[str, Any]]:
+        """Parse a single conversation file."""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            conversation_id = data.get("conversation_id", file_path.stem)
+            created_at = data.get("created_at", "")
+            last_updated = data.get("last_updated", "")
+            total_messages = len(data.get("messages", []))
+            total_cost = data.get("total_cost", 0.0)
+
+            # Parse timestamps
+            created_str, updated_str = self._parse_timestamps(created_at, last_updated)
+
+            return {
+                'id': conversation_id,
+                'created': created_str,
+                'updated': updated_str,
+                'messages': total_messages,
+                'cost': total_cost
+            }
+
+        except (json.JSONDecodeError, OSError) as e:
+            self.logger.warning("Failed to read conversation file %s: %s", file_path, e)
+            return None
+
+    def _parse_timestamps(self, created_at: str, last_updated: str) -> Tuple[str, str]:
+        """Parse timestamp strings into readable format."""
+        try:
+            created_dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            updated_dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+            created_str = created_dt.strftime("%Y-%m-%d %H:%M")
+            updated_str = updated_dt.strftime("%Y-%m-%d %H:%M")
+        except (ValueError, AttributeError):
+            created_str = created_at[:19] if created_at else "Unknown"
+            updated_str = last_updated[:19] if last_updated else "Unknown"
+
+        return created_str, updated_str
+
+    def _display_detailed_conversations(self, conversations: List[Dict[str, Any]]) -> None:
+        """Display conversations in detailed table format."""
+        headers = ["ID", "Created", "Updated", "Messages", "Cost"]
+        table_data = []
+        for conv in conversations:
+            table_data.append([
+                conv['id'],
+                conv['created'],
+                conv['updated'],
+                str(conv['messages']),
+                f"${conv['cost']:.4f}"
+            ])
+
+        print(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+    def _display_simple_conversations(self, conversations: List[Dict[str, Any]]) -> None:
+        """Display conversations in simple list format."""
+        for conv in conversations:
+            print(f"  {Fore.GREEN}{conv['id']:<20}{Style.RESET_ALL} "
+                  f"{conv['messages']:>3} messages, "
+                  f"${conv['cost']:.4f}, "
+                  f"updated {conv['updated']}")
+
     # Override cmd methods for better UX
-    def default(self, line):
+    def default(self, line: str) -> Optional[bool]:
         """Handle commands that don't start with /"""
         if line.startswith('/'):
             cmd_name = line.split()[0][1:]  # Remove the /
@@ -940,9 +957,11 @@ Type /help for available commands
                     # Return the result so cmdloop() can handle exit commands
                     return result
             print(f"{Fore.RED}Unknown command: {line.split()[0]}{Style.RESET_ALL}")
-        else:
-            # Treat as a query if no / prefix
-            self.do_query(line)
+            return None
+
+        # Treat as a query if no / prefix
+        self.do_query(line)
+        return None
 
     def emptyline(self):
         """Don't repeat last command on empty line."""

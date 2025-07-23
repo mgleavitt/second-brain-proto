@@ -35,7 +35,8 @@ class BaseAgent:  # pylint: disable=too-few-public-methods
         self.total_cost = 0.0
         self.total_tokens = 0
 
-    def _invoke_llm_with_tracking(self, prompt: str, agent_name: Optional[str] = None) -> Dict[str, Any]:
+    def _invoke_llm_with_tracking(self, prompt: str,
+                                  agent_name: Optional[str] = None) -> Dict[str, Any]:  # pylint: disable=unused-argument
         """Invoke LLM and track metrics (cost, tokens, duration)."""
         try:
             start_time = time.time()

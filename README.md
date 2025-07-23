@@ -15,6 +15,7 @@ This prototype validates the concept of a "Second Brain" system that can:
 - Use intelligent routing to optimize costs
 - Generate module summaries for improved accuracy
 - Implement semantic caching for similar queries
+- Support hybrid chat architecture for cost optimization
 
 ## Architecture
 
@@ -44,6 +45,13 @@ The system consists of several key components:
 - Uses keyword matching and semantic embeddings
 - Reduces costs by querying only relevant documents
 - Implements query complexity detection for optimal routing
+
+### Hybrid Chat System
+
+- Intelligently routes between lightweight chat and full agent pipeline
+- Reduces costs for simple follow-up questions
+- Maintains conversation continuity
+- Uses complexity analysis for routing decisions
 
 ### Cache System
 
@@ -85,6 +93,13 @@ The system consists of several key components:
 - Compares different routing strategies
 - Provides cost/quality tradeoff analysis
 - Generates performance reports
+
+### Hybrid Chat Features
+
+- Routes simple queries to lightweight models
+- Uses full agent pipeline for complex queries
+- Implements context filtering for efficiency
+- Provides cost optimization through intelligent routing
 
 ## Reviewing Logs
 
@@ -173,7 +188,8 @@ GOOGLE_API_KEY=your_google_api_key_here
 
 ### 3. Test Documents
 
-The prototype includes test documents in the `documents/` directory and extensive course materials in the `classes/` directory.
+The prototype includes test documents in the `documents/` directory and extensive course
+materials in the `classes/` directory.
 
 ## Usage
 
@@ -256,7 +272,8 @@ python prototype.py scale-test --use-routing
 
 ## System Prompts
 
-The system supports file-based prompts for all agents, allowing dynamic customization of agent behavior without code changes.
+The system supports file-based prompts for all agents, allowing dynamic customization
+of agent behavior without code changes.
 
 ### Default Prompt Files
 
@@ -431,6 +448,11 @@ second-brain-proto/
 ├── .env.example           # Template for environment variables
 ├── prototype.py           # Main prototype script
 ├── interactive_session.py # Interactive CLI interface
+├── chat_controller.py     # Hybrid chat routing controller
+├── complexity_analyzer.py # Query complexity analysis
+├── context_filter.py      # Context filtering for agents
+├── light_chat_model.py    # Lightweight chat model
+├── hybrid_config.py       # Hybrid chat configuration
 ├── prompt_manager.py      # System prompt management
 ├── model_config.py        # Model configuration and cost tracking
 ├── cache_manager.py       # Caching system
@@ -439,6 +461,7 @@ second-brain-proto/
 ├── semantic_cache.py      # Semantic caching system
 ├── embedding_router.py    # Embedding-based routing
 ├── evaluation_framework.py # Query evaluation framework
+├── conversation_manager.py # Conversation management
 ├── test_prompts.py        # Prompt functionality tests
 ├── test_advanced_features.py # Advanced features tests
 ├── debug_commands.py      # Debugging utilities
@@ -459,11 +482,13 @@ second-brain-proto/
 │   └── synthesis_agent.md
 ├── documents/            # Test documents directory
 ├── classes/              # Course materials directory
+├── chats/                # Chat conversation data
 ├── logs/                 # Query logs directory
 │   └── queries.jsonl     # JSON lines format log file
 ├── .cache/               # Cache directory
 ├── .semantic_cache/      # Semantic cache directory
 ├── .evaluation/          # Evaluation results directory
+├── .conversations/       # Conversation history
 └── README.md            # This file
 ```
 
@@ -483,6 +508,13 @@ second-brain-proto/
 - Routes module-specific queries to relevant module agents
 - Uses full synthesis pipeline for complex cross-document queries
 - Reduces costs by 40-60% for simple queries
+
+### Hybrid Chat Implementation
+
+- Routes between lightweight and full agent pipelines
+- Maintains conversation continuity
+- Implements context filtering for efficiency
+- Provides significant cost savings for follow-up questions
 
 ### Intelligent Synthesis
 
@@ -518,6 +550,7 @@ The prototype demonstrates:
 - ✅ Module summarization
 - ✅ Semantic caching
 - ✅ Query evaluation
+- ✅ Hybrid chat architecture
 
 ## Future Enhancements
 
@@ -529,6 +562,7 @@ Potential improvements for future versions:
    - Comprehensive cost tracking
    - Scale testing capabilities
    - Advanced optimization features
+   - Hybrid chat architecture
 
 2. **Next Steps**
    - Web interface using Gradio
@@ -580,9 +614,18 @@ This project is for educational and research purposes.
 
 For advanced users and contributors, the following markdown files provide in-depth technical details, architectural diagrams, and the history of major optimizations:
 
-- **ADVANCED_FEATURES_IMPLEMENTATION.md**: Detailed implementation notes and usage for advanced features such as module summaries, semantic caching, embedding-based routing, and the evaluation framework.
-- **CODE_STRUCTURE_DIAGRAM.md**: A comprehensive diagram and breakdown of the system's architecture, including all major modules and data flow.
-- **IMPROVEMENTS_SUMMARY.md**: Summary of improvements made for handling large corpora, including routing, chunking, and scalability enhancements.
-- **ROUTING_FIX_SUMMARY.md**: Technical summary of the routing algorithm improvements, including configuration, complexity detection, and cost reduction results.
+- **DOCUMENT_AGENT_HIERARCHY_DISCUSSION.md**: Important architectural discussion
+  about document agent hierarchy and relationship types.
+- **SYSTEM_IMPROVEMENTS.md**: Comprehensive overview of all major improvements
+  and advanced features implemented in the system, including module summaries,
+  semantic caching, embedding-based routing, routing fixes, and performance
+  optimizations.
+- **ARCHITECTURE.md**: Complete system architecture documentation including
+  component diagrams, data flow, configuration management, and development
+  guidelines.
+- **TECHNICAL_GUIDE.md**: Comprehensive technical implementation guide covering
+  development setup, core architecture, hybrid chat system, advanced features,
+  testing, and deployment considerations.
 
-Consult these files for deeper insight into the system's design, optimization strategies, and implementation rationale.
+Consult these files for deeper insight into the system's design, optimization
+strategies, and implementation rationale.

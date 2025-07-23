@@ -76,7 +76,9 @@ class ModelConfig:
         "synthesis": "claude-3-sonnet",
         "routing": "claude-3-haiku",
         "summarizer": "gemini-flash",
-        "evaluator": "gemini-flash"
+        "evaluator": "gemini-flash",
+        "conversation_controller": "claude-3-haiku",
+        "complexity_analyzer": "claude-3-haiku"
     }
 
     def __init__(self):

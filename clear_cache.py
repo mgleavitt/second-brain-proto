@@ -2,7 +2,6 @@
 """Script to clear cache and test query."""
 
 import os
-import shutil
 from pathlib import Path
 
 def clear_cache():
